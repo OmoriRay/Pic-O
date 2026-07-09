@@ -1,18 +1,18 @@
-# Pic-O 架构说明
+# Pixora 架构说明
 
 本文面向后续维护者，目标是让人或 AI 编程助手能快速理解工程结构、运行流程和修改边界。
 
 ## 项目定位
 
-Pic-O 是一个 Windows WPF 图片查看器，目标框架是 `net9.0-windows`。它的重点不是图片管理库，而是轻量打开、目录浏览、缩略图预览、快捷键、收藏、裁剪、压缩、批量压缩、壁纸设置和 Windows 文件关联。
+Pixora 是一个 Windows WPF 图片查看器，目标框架是 `net9.0-windows`。它的重点不是图片管理库，而是轻量打开、目录浏览、缩略图预览、快捷键、收藏、裁剪、压缩、批量压缩、壁纸设置和 Windows 文件关联。
 
-用户可见名称是 `Pic-O`，但项目目录、解决方案和命名空间仍是 `PureView`。这是历史命名，当前没有完成全量重命名。维护时应优先保证用户可见品牌、发布包名称和数据目录正确，而不是强行改内部命名。
+项目目录、解决方案、命名空间、程序集名和用户可见品牌已经统一为 `Pixora`。旧名称 `Pic-O` 和 `PureView` 仅作为历史兼容名保留，主要用于本地数据迁移和历史记录说明。
 
 ## 工程结构
 
 ```text
-PureView.sln
-src\PureView
+Pixora.sln
+src\Pixora
   App.xaml
   App.xaml.cs
   AppInfo.cs
@@ -30,7 +30,7 @@ src\PureView
   Controls\
   Models\
   Services\
-tests\PureView.SmokeTests
+tests\Pixora.SmokeTests
 test-images
 tools
 docs
@@ -38,11 +38,11 @@ docs
 
 主要目录职责：
 
-- `src\PureView`：WPF 应用主体。
-- `src\PureView\Controls`：自定义渲染控件，目前核心是 `BitmapViewer`。
-- `src\PureView\Models`：轻量模型和枚举，例如图片文档、动画帧、快捷键动作。
-- `src\PureView\Services`：图片加载、目录索引、缓存、设置、快捷键、文件关联、收藏、压缩、错误日志等可测试逻辑。
-- `tests\PureView.SmokeTests`：控制台式 smoke test，不是完整 UI 自动化，但覆盖了核心服务和渲染回归。
+- `src\Pixora`：WPF 应用主体。
+- `src\Pixora\Controls`：自定义渲染控件，目前核心是 `BitmapViewer`。
+- `src\Pixora\Models`：轻量模型和枚举，例如图片文档、动画帧、快捷键动作。
+- `src\Pixora\Services`：图片加载、目录索引、缓存、设置、快捷键、文件关联、收藏、压缩、错误日志等可测试逻辑。
+- `tests\Pixora.SmokeTests`：控制台式 smoke test，不是完整 UI 自动化，但覆盖了核心服务和渲染回归。
 - `test-images`：内置小样本，测试启动时会生成部分动态图、HDR、AVIF 或输出文件。
 - `tools`：辅助脚本。`SetUserFTA.exe` 是可选外部工具，不能进仓库。
 
@@ -59,20 +59,20 @@ docs
 异常日志写入：
 
 ```text
-%LOCALAPPDATA%\Pic-O\error.log
+%LOCALAPPDATA%\Pixora\error.log
 ```
 
 ## 品牌和路径集中配置
 
-`src\PureView\AppInfo.cs` 是品牌、数据目录和文件关联的集中配置点：
+`src\Pixora\AppInfo.cs` 是品牌、数据目录和文件关联的集中配置点：
 
-- `Name = "Pic-O"`：窗口标题、注册应用名、消息框标题。
-- `DataFolderName = "Pic-O"`：当前本地数据目录。
-- `PreviousDataFolderName = "PureView"`：旧数据目录，用于迁移。
-- `FileAssociationProgId = "PicO.Image"`：Windows 文件关联 ProgId。
-- `FileTypeDisplayName = "Pic-O 图片"`：资源管理器里显示的文件类型名。
-- `Description = "Pic-O 图片查看器"`：注册应用描述。
-- `FileTypeIconRelativePath = @"Assets\PicOImage.ico"`：文件类型图标。
+- `Name = "Pixora"`：窗口标题、注册应用名、消息框标题。
+- `DataFolderName = "Pixora"`：当前本地数据目录。
+- `PreviousDataFolderNames = ["Pic-O", "PureView"]`：旧数据目录，用于迁移。
+- `FileAssociationProgId = "Pixora.Image"`：Windows 文件关联 ProgId。
+- `FileTypeDisplayName = "Pixora 图片"`：资源管理器里显示的文件类型名。
+- `Description = "Pixora 图片查看器"`：注册应用描述。
+- `FileTypeIconRelativePath = @"Assets\PixoraImage.ico"`：文件类型图标。
 - `WallpaperFilePrefix`：生成壁纸临时文件名前缀。
 - `BatchCompressLogPrefix`：批量压缩日志文件名前缀。
 
@@ -160,7 +160,7 @@ docs
 - 动画最大像素帧：`300_000_000`。
 - 动画最小帧延迟会被夹到可用值，避免极小 delay 导致播放异常。
 
-新增解码逻辑时，优先给 `tests\PureView.SmokeTests` 加样本或生成样本，至少覆盖“能解码”和“失败不会逃逸到 UI 崩溃”两个方向。
+新增解码逻辑时，优先给 `tests\Pixora.SmokeTests` 加样本或生成样本，至少覆盖“能解码”和“失败不会逃逸到 UI 崩溃”两个方向。
 
 ## 视频封面
 
@@ -190,7 +190,7 @@ docs
 - `ImageCache`：完整静态图片文档内存缓存，按估算解码字节数做 LRU，动图不会进入该缓存。
 - `BitmapSourceMemoryCache`：显示预览内存缓存，带文件长度和修改时间校验，避免文件变化后使用旧预览。
 - `MainWindow` 内的 `_thumbnailCache`：缩略图内存缓存，最大条目数由 `MaxThumbnailCacheItems` 控制。
-- `ThumbnailDiskCache`：可选缩略图磁盘缓存，位于 `%LOCALAPPDATA%\Pic-O\thumbnail-cache`。
+- `ThumbnailDiskCache`：可选缩略图磁盘缓存，位于 `%LOCALAPPDATA%\Pixora\thumbnail-cache`。
 
 设置里可以调整：
 
@@ -199,14 +199,14 @@ docs
 - 低内存保护。
 - 是否启用缩略图磁盘缓存。
 
-已知限制：缩略图磁盘缓存目前没有自动容量清理。用户需要清理时可删除 `%LOCALAPPDATA%\Pic-O\thumbnail-cache`。
+已知限制：缩略图磁盘缓存目前没有自动容量清理。用户需要清理时可删除 `%LOCALAPPDATA%\Pixora\thumbnail-cache`。
 
 ## 设置持久化
 
 `ViewerSettings` 写入：
 
 ```text
-%LOCALAPPDATA%\Pic-O\viewer-settings.json
+%LOCALAPPDATA%\Pixora\viewer-settings.json
 ```
 
 当前包含：
@@ -230,19 +230,19 @@ docs
 `ShortcutSettings` 写入：
 
 ```text
-%LOCALAPPDATA%\Pic-O\shortcuts.json
+%LOCALAPPDATA%\Pixora\shortcuts.json
 ```
 
 `FavoriteStore` 写入：
 
 ```text
-%LOCALAPPDATA%\Pic-O\favorites.json
+%LOCALAPPDATA%\Pixora\favorites.json
 ```
 
 `BatchCompressionSettings` 写入：
 
 ```text
-%LOCALAPPDATA%\Pic-O\batch-compression-settings.json
+%LOCALAPPDATA%\Pixora\batch-compression-settings.json
 ```
 
 新增设置时要考虑三个问题：
@@ -256,14 +256,14 @@ docs
 快捷键动作定义在：
 
 ```text
-src\PureView\Models\ShortcutAction.cs
+src\Pixora\Models\ShortcutAction.cs
 ```
 
 动作名称、分组、上下文和默认排序在：
 
 ```text
-src\PureView\Services\ShortcutSettings.cs
-src\PureView\ShortcutSettingsWindow.xaml.cs
+src\Pixora\Services\ShortcutSettings.cs
+src\Pixora\ShortcutSettingsWindow.xaml.cs
 ```
 
 关键概念：
@@ -372,9 +372,9 @@ Services\BatchCompressionSettings.cs
 
 1. 确认当前文档是静态图片。
 2. 按当前显示级旋转生成壁纸位图。
-3. 写入 `%LOCALAPPDATA%\Pic-O` 下的 `Pic-O-wallpaper-*.jpg`。
+3. 写入 `%LOCALAPPDATA%\Pixora` 下的 `Pixora-wallpaper-*.jpg`。
 4. 调用 `SystemParametersInfo(SPI_SETDESKWALLPAPER)`。
-5. 清理旧的 Pic-O 壁纸临时文件。
+5. 清理旧的 Pixora 壁纸临时文件。
 
 维护时要保留“动图不显示该功能”的规则，避免把动画帧错误保存成壁纸。
 
@@ -384,19 +384,19 @@ Services\BatchCompressionSettings.cs
 
 普通注册做的事：
 
-- 写入 `HKCU\Software\Classes\PicO.Image`。
-- 写入打开命令：`"Pic-O.exe" "%1"`。
-- 写入 `Applications\Pic-O.exe` 打开命令。
-- 写入 `Software\Pic-O\Capabilities\FileAssociations`。
+- 写入 `HKCU\Software\Classes\Pixora.Image`。
+- 写入打开命令：`"Pixora.exe" "%1"`。
+- 写入 `Applications\Pixora.exe` 打开命令。
+- 写入 `Software\Pixora\Capabilities\FileAssociations`。
 - 写入 `HKCU\Software\RegisteredApplications`。
-- 把 `PicO.Image` 加到各扩展名的 `OpenWithProgids`。
+- 把 `Pixora.Image` 加到各扩展名的 `OpenWithProgids`。
 - 调用 `SHChangeNotify` 通知 Shell 更新关联。
 
 默认应用限制：
 
 - Windows 10/11 通常不允许普通桌面应用静默把自己设为默认应用。
 - `TrySetDefaultAssociationsSilently` 会先检测旧 COM 路径是否可用；现代系统大多会失败。
-- 官方 fallback 是打开 `ms-settings:defaultapps?registeredAppUser=Pic-O` 让用户确认。
+- 官方 fallback 是打开 `ms-settings:defaultapps?registeredAppUser=Pixora` 让用户确认。
 - “高级一键默认”依赖用户自行提供的 `SetUserFTA.exe`。这是非官方高级方案，不能内置到开源仓库。
 
 ## 本地窗口和 UI 状态
@@ -417,7 +417,7 @@ Services\BatchCompressionSettings.cs
 运行：
 
 ```powershell
-dotnet run --project tests\PureView.SmokeTests\PureView.SmokeTests.csproj
+dotnet run --project tests\Pixora.SmokeTests\Pixora.SmokeTests.csproj
 ```
 
 当前 smoke test 覆盖：
@@ -441,7 +441,7 @@ dotnet run --project tests\PureView.SmokeTests\PureView.SmokeTests.csproj
 带外部目录：
 
 ```powershell
-dotnet run --project tests\PureView.SmokeTests\PureView.SmokeTests.csproj -- --media-folder "D:\Samples" --sample-count 50 --video-sample-count 5
+dotnet run --project tests\Pixora.SmokeTests\Pixora.SmokeTests.csproj -- --media-folder "D:\Samples" --sample-count 50 --video-sample-count 5
 ```
 
 还可以直接传入单张外部图片路径，测试预览、完整加载和渲染是否完整。
@@ -466,6 +466,6 @@ dotnet run --project tests\PureView.SmokeTests\PureView.SmokeTests.csproj -- --m
 - `MainWindow.xaml.cs` 很大，长期可以按“目录打开/加载、缩略图、编辑、文件操作、UI 状态”拆分，但短期不要做无业务收益的大重构。
 - 缩略图磁盘缓存无容量清理策略。
 - 默认应用自动设置受 Windows 保护限制，不能保证静默成功。
-- 内部命名仍是 `PureView`，外部品牌是 `Pic-O`。
+- 旧名称 `Pic-O` 和 `PureView` 仍需要在数据迁移逻辑中保留，避免老用户设置丢失。
 - 当前测试偏服务和渲染 smoke test，缺少完整 UI 自动化。
 - 目录索引只读当前目录；如果未来要支持递归浏览，需要重新设计性能、排序、删除和缩略图策略。

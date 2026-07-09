@@ -1,4 +1,4 @@
-# Pic-O 发布说明
+# Pixora 发布说明
 
 本文记录从本地检查到 GitHub Release 的完整流程。发布前请同时阅读 `AGENTS.md` 和 `docs\ARCHITECTURE.md`。
 
@@ -6,13 +6,13 @@
 
 当前默认发布目标：
 
-- 应用名：`Pic-O`
-- 解决方案：`PureView.sln`
-- 主项目：`src\PureView\PureView.csproj`
+- 应用名：`Pixora`
+- 解决方案：`Pixora.sln`
+- 主项目：`src\Pixora\Pixora.csproj`
 - Target Framework：`net9.0-windows`
 - Runtime：`win-x64`
-- 默认发布目录：`publish\Pic-O-win-x64`
-- 默认压缩包：`publish\Pic-O-win-x64.zip`
+- 默认发布目录：`publish\Pixora-win-x64`
+- 默认压缩包：`publish\Pixora-win-x64.zip`
 - 许可证：MIT License
 
 Release 配置关闭 PDB：
@@ -28,7 +28,7 @@ Release 配置关闭 PDB：
 
 发布前同步检查：
 
-- `src\PureView\PureView.csproj`
+- `src\Pixora\Pixora.csproj`
   - `<Version>`
   - `<AssemblyVersion>`
   - `<FileVersion>`
@@ -38,7 +38,7 @@ Release 配置关闭 PDB：
 - Git 标签
   - 推荐格式：`vX.Y.Z`
 - GitHub Release 标题
-  - 推荐格式：`Pic-O vX.Y.Z`
+  - 推荐格式：`Pixora vX.Y.Z`
 
 如果只改文档，不需要升级版本号。功能、行为或发布包变化才需要考虑升版本。
 
@@ -92,19 +92,19 @@ rg -n -i "<本机用户名>|<私有绝对路径>|<私有样本目录>|<访问令
 先构建：
 
 ```powershell
-dotnet build PureView.sln
+dotnet build Pixora.sln
 ```
 
 运行 smoke test：
 
 ```powershell
-dotnet run --project tests\PureView.SmokeTests\PureView.SmokeTests.csproj
+dotnet run --project tests\Pixora.SmokeTests\Pixora.SmokeTests.csproj
 ```
 
 涉及解码、缩略图、视频封面、大目录性能时，建议加真实素材目录：
 
 ```powershell
-dotnet run --project tests\PureView.SmokeTests\PureView.SmokeTests.csproj -- --media-folder "D:\Samples" --sample-count 50 --video-sample-count 5
+dotnet run --project tests\Pixora.SmokeTests\Pixora.SmokeTests.csproj -- --media-folder "D:\Samples" --sample-count 50 --video-sample-count 5
 ```
 
 如果测试失败，先读英文报错含义，再定位对应服务。不要为了发布跳过失败测试，除非明确记录失败原因和风险。
@@ -128,7 +128,7 @@ dotnet run --project tests\PureView.SmokeTests\PureView.SmokeTests.csproj -- --m
 - 批量压缩目录，确认动图跳过、失败项有提示、输出目录有日志。
 - 视频文件显示封面，并可另存视频封面。
 - 静态图片右键显示“设为桌面壁纸”，GIF/APNG/视频不显示。
-- 文件关联注册后，资源管理器中的图片文件类型图标是 Pic-O 图片图标。
+- 文件关联注册后，资源管理器中的图片文件类型图标是 Pixora 图片图标。
 
 ## 生成发布包
 
@@ -153,8 +153,8 @@ dotnet run --project tests\PureView.SmokeTests\PureView.SmokeTests.csproj -- --m
 默认输出：
 
 ```text
-publish\Pic-O-win-x64
-publish\Pic-O-win-x64.zip
+publish\Pixora-win-x64
+publish\Pixora-win-x64.zip
 ```
 
 ## 发布包检查
@@ -162,36 +162,36 @@ publish\Pic-O-win-x64.zip
 检查发布目录：
 
 ```powershell
-Get-ChildItem publish\Pic-O-win-x64
+Get-ChildItem publish\Pixora-win-x64
 ```
 
 必须有：
 
-- `Pic-O.exe`
+- `Pixora.exe`
 - `LICENSE`
-- `Assets\PicOImage.ico`
+- `Assets\PixoraImage.ico`
 - `tools\batch-compress.ps1`
 - `tools\batch-compress-README.md`
 - 运行所需的 `.dll` 和 `.deps.json` / `.runtimeconfig.json`
 
 不应有：
 
-- `Pic-O.pdb`
+- `Pixora.pdb`
 - `SetUserFTA.exe`
 - 本机测试图片、私有样本、日志或临时文件
 
 可用命令检查：
 
 ```powershell
-Test-Path publish\Pic-O-win-x64\LICENSE
-Test-Path publish\Pic-O-win-x64\Pic-O.pdb
-Test-Path publish\Pic-O-win-x64\tools\SetUserFTA.exe
+Test-Path publish\Pixora-win-x64\LICENSE
+Test-Path publish\Pixora-win-x64\Pixora.pdb
+Test-Path publish\Pixora-win-x64\tools\SetUserFTA.exe
 ```
 
 预期：
 
 - `LICENSE` 返回 `True`。
-- `Pic-O.pdb` 返回 `False`。
+- `Pixora.pdb` 返回 `False`。
 - `tools\SetUserFTA.exe` 在正式开源包中返回 `False`。
 
 ## 本地试运行发布包
@@ -199,13 +199,13 @@ Test-Path publish\Pic-O-win-x64\tools\SetUserFTA.exe
 直接运行：
 
 ```powershell
-.\publish\Pic-O-win-x64\Pic-O.exe
+.\publish\Pixora-win-x64\Pixora.exe
 ```
 
 传入测试图片或目录：
 
 ```powershell
-.\publish\Pic-O-win-x64\Pic-O.exe "D:\Pictures"
+.\publish\Pixora-win-x64\Pixora.exe "D:\Pictures"
 ```
 
 注意：如果是非 self-contained 发布，测试机器需要有对应 .NET 运行时。
@@ -238,13 +238,13 @@ git push origin v0.3.0
 创建 Release 示例：
 
 ```powershell
-gh release create v0.3.0 publish\Pic-O-win-x64.zip --title "Pic-O v0.3.0" --notes "Pic-O v0.3.0"
+gh release create v0.3.0 publish\Pixora-win-x64.zip --title "Pixora v0.3.0" --notes "Pixora v0.3.0"
 ```
 
 如果 Release 已存在，只更新附件：
 
 ```powershell
-gh release upload v0.3.0 publish\Pic-O-win-x64.zip --clobber
+gh release upload v0.3.0 publish\Pixora-win-x64.zip --clobber
 ```
 
 发布后检查：
@@ -256,15 +256,15 @@ gh release view v0.3.0 --web
 确认内容：
 
 - Release 标题正确。
-- 附件是最新 `Pic-O-win-x64.zip`。
+- 附件是最新 `Pixora-win-x64.zip`。
 - 附件名不含本机路径。
 - Release 说明没有隐私信息或具体 AI 工具信息。
 
 ## 默认应用说明
 
-Pic-O 设置页里有两个层级：
+Pixora 设置页里有两个层级：
 
-- “关联常见图片格式”：把 Pic-O 加入 Windows 打开方式列表。
+- “关联常见图片格式”：把 Pixora 加入 Windows 打开方式列表。
 - “关联并设为默认应用”：先注册，再尝试官方静默路径；如果系统不允许，则打开 Windows 默认应用设置页。
 
 现代 Windows 通常禁止普通应用静默设置默认应用，这是系统保护机制，不是发布包缺文件。
@@ -276,7 +276,7 @@ Pic-O 设置页里有两个层级：
 只要代码已经推送到 GitHub，用户删除本地工作目录后仍可重新下载：
 
 ```powershell
-git clone https://github.com/OmoriRay/Pic-O.git
+git clone https://github.com/OmoriRay/Pixora.git
 ```
 
 下载 Release 包则从 GitHub Releases 页面获取 zip。GitHub 可以保存源码和发布附件，但它不是完整备份策略；未提交的本地文件、未上传的 Release 包和用户本机设置不会自动保存。
@@ -286,12 +286,12 @@ git clone https://github.com/OmoriRay/Pic-O.git
 - `README.md` 版本号正确。
 - `.csproj` 版本号正确。
 - `LICENSE` 存在且发布包包含它。
-- `dotnet build PureView.sln` 通过。
+- `dotnet build Pixora.sln` 通过。
 - smoke test 通过。
 - 真实样本测试按需通过。
 - 隐私扫描无具体 AI 工具、模型、账号、令牌、本机路径。
 - `git status --short --branch` 只显示预期改动，或提交后干净。
-- `publish\Pic-O-win-x64.zip` 是最新生成。
+- `publish\Pixora-win-x64.zip` 是最新生成。
 - 发布包不包含 PDB。
 - 发布包不包含 `SetUserFTA.exe`。
 - Git 标签和 GitHub Release 对应同一个提交。

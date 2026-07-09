@@ -13,8 +13,8 @@ param(
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Project = Join-Path $Root "src\PureView\PureView.csproj"
-$Output = Join-Path $Root "publish\Pic-O-$Runtime"
+$Project = Join-Path $Root "src\Pixora\Pixora.csproj"
+$Output = Join-Path $Root "publish\Pixora-$Runtime"
 $ZipPath = "$Output.zip"
 
 if (Test-Path $Output) {

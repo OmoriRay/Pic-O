@@ -1,11 +1,12 @@
-# Pic-O 接手维护说明
+# Pixora 接手维护说明
 
 这份文件给后续接手项目的人和 AI 编程助手使用。修改前请先读完本文件、`README.md`、`docs/ARCHITECTURE.md` 和 `docs/RELEASE.md`，再开始动代码。
 
 ## 基本约定
 
-- 用户可见的软件名是 `Pic-O`。
-- 源码项目、命名空间和解决方案仍沿用 `PureView`，例如 `PureView.sln`、`src\PureView`、`namespace PureView`。不要为了名字统一贸然做全项目重命名，除非已经准备好处理迁移、发布包、文件关联、测试和 Git 历史里的影响。
+- 用户可见的软件名是 `Pixora`。
+- 源码项目、命名空间、解决方案和发布包统一使用 `Pixora`，例如 `Pixora.sln`、`src\Pixora`、`namespace Pixora`。
+- `Pic-O` 和 `PureView` 只作为旧版本兼容名称保留，用于本地数据迁移、历史 Git 记录和必要的发布说明。
 - 默认用简体中文写面向用户的说明、错误提示、发布说明和维护文档。
 - 代码、类型名、文件名、注册表项、命令和配置键保持原文。
 - 项目可以说明“由 AI 辅助编程完成”，但不要写具体 AI 工具、模型、账号、本机用户名、绝对工作目录、测试素材私有路径或访问令牌。
@@ -15,15 +16,15 @@
 ## 快速命令
 
 ```powershell
-dotnet build PureView.sln
-dotnet run --project tests\PureView.SmokeTests\PureView.SmokeTests.csproj
+dotnet build Pixora.sln
+dotnet run --project tests\Pixora.SmokeTests\Pixora.SmokeTests.csproj
 .\publish.ps1 -Zip
 ```
 
 带外部样本目录的压力测试示例：
 
 ```powershell
-dotnet run --project tests\PureView.SmokeTests\PureView.SmokeTests.csproj -- --media-folder "D:\Samples" --sample-count 50 --video-sample-count 5
+dotnet run --project tests\Pixora.SmokeTests\Pixora.SmokeTests.csproj -- --media-folder "D:\Samples" --sample-count 50 --video-sample-count 5
 ```
 
 检查仓库状态：
@@ -37,17 +38,17 @@ git status --short --branch
 - `README.md`：面向普通用户和开源仓库首页。
 - `docs\ARCHITECTURE.md`：工程结构、核心流程、服务职责、设置文件和技术债。
 - `docs\RELEASE.md`：版本号、构建、测试、发布包检查、GitHub Release 和隐私扫描。
-- `src\PureView\AppInfo.cs`：品牌名、数据目录、文件关联 ProgId、图标路径、旧数据迁移。
-- `src\PureView\MainWindow.xaml` 和 `src\PureView\MainWindow.xaml.cs`：主窗口、打开图片、目录补齐、缩略图栏、快捷键入口、收藏、裁剪、压缩、壁纸、批量删除等大部分用户工作流。
-- `src\PureView\Services`：图片加载、视频封面、缓存、目录索引、设置、快捷键、文件关联、收藏、压缩和错误日志。
-- `tests\PureView.SmokeTests\Program.cs`：当前自动测试覆盖面，也是改动后最先跑的回归入口。
+- `src\Pixora\AppInfo.cs`：品牌名、数据目录、文件关联 ProgId、图标路径、旧数据迁移。
+- `src\Pixora\MainWindow.xaml` 和 `src\Pixora\MainWindow.xaml.cs`：主窗口、打开图片、目录补齐、缩略图栏、快捷键入口、收藏、裁剪、压缩、壁纸、批量删除等大部分用户工作流。
+- `src\Pixora\Services`：图片加载、视频封面、缓存、目录索引、设置、快捷键、文件关联、收藏、压缩和错误日志。
+- `tests\Pixora.SmokeTests\Program.cs`：当前自动测试覆盖面，也是改动后最先跑的回归入口。
 
 ## 重要数据和配置
 
 应用数据目录：
 
 ```text
-%LOCALAPPDATA%\Pic-O
+%LOCALAPPDATA%\Pixora
 ```
 
 当前会写入或读取的主要文件：
@@ -62,6 +63,7 @@ git status --short --branch
 旧版本数据目录是：
 
 ```text
+%LOCALAPPDATA%\Pic-O
 %LOCALAPPDATA%\PureView
 ```
 
@@ -104,7 +106,7 @@ git status --short --branch
 
 - Release 配置不输出 PDB，避免本机路径进入发布包。
 - 发布包必须包含 `LICENSE`。
-- 发布包不应包含 `Pic-O.pdb`。
+- 发布包不应包含 `Pixora.pdb`。
 - `tools\SetUserFTA.exe` 只有用户本地自行放置时才会被条件复制，仓库和正式开源包不应包含它。
 
 ## 测试策略
@@ -112,14 +114,14 @@ git status --short --branch
 每次代码改动至少运行：
 
 ```powershell
-dotnet build PureView.sln
-dotnet run --project tests\PureView.SmokeTests\PureView.SmokeTests.csproj
+dotnet build Pixora.sln
+dotnet run --project tests\Pixora.SmokeTests\Pixora.SmokeTests.csproj
 ```
 
 涉及图片解码、缩略图、大目录性能或视频封面时，再用真实素材目录跑外部样本参数：
 
 ```powershell
-dotnet run --project tests\PureView.SmokeTests\PureView.SmokeTests.csproj -- --media-folder "D:\Samples" --sample-count 50 --video-sample-count 5
+dotnet run --project tests\Pixora.SmokeTests\Pixora.SmokeTests.csproj -- --media-folder "D:\Samples" --sample-count 50 --video-sample-count 5
 ```
 
 涉及 UI 体验时，至少手动检查：
@@ -140,7 +142,7 @@ dotnet run --project tests\PureView.SmokeTests\PureView.SmokeTests.csproj -- --m
 - 提交前运行 `git status --short --branch`，确认只提交本次相关文件。
 - 文档改动可以单独提交；代码改动要附带测试或说明为什么不需要。
 - 版本发布建议使用 `vX.Y.Z` 标签，例如 `v0.3.0`。
-- GitHub Release 附件优先上传 `publish\Pic-O-win-x64.zip`。
+- GitHub Release 附件优先上传 `publish\Pixora-win-x64.zip`。
 
 ## 隐私和仓库清理
 
