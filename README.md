@@ -108,3 +108,7 @@ tools\batch-compress-README.md
 ```
 
 其中包括 `viewer-settings.json`、`shortcuts.json`、`favorites.json` 和 `error.log`。旧版 `%LOCALAPPDATA%\PureView` 中的设置、快捷键、收藏和批量压缩设置会在首次启动时迁移。
+
+## 许可证
+
+本项目使用 MIT License 开源，详见 `LICENSE`。第三方依赖遵循其各自许可证。

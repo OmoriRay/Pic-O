@@ -38,6 +38,10 @@
              Link="tools\batch-compress-README.md"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\LICENSE"
+             Link="LICENSE"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\..\tools\SetUserFTA.exe"
              Condition="Exists('..\..\tools\SetUserFTA.exe')"
              Link="tools\SetUserFTA.exe"
