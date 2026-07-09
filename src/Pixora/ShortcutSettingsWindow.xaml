@@ -107,9 +107,14 @@
                 </StackPanel>
             </Border>
 
-            <Grid Grid.Row="1">
+            <Grid Grid.Row="1"
+                  ClipToBounds="True">
                 <ScrollViewer x:Name="GeneralPage"
-                              VerticalScrollBarVisibility="Auto">
+                              Background="#101216"
+                              ClipToBounds="True"
+                              VerticalScrollBarVisibility="Auto"
+                              TextOptions.TextRenderingMode="Grayscale"
+                              TextOptions.TextHintingMode="Animated">
                     <Grid Margin="0,12,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
@@ -341,6 +346,8 @@
                                  ScrollViewer.CanContentScroll="False"
                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                  ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                 TextOptions.TextRenderingMode="Grayscale"
+                                 TextOptions.TextHintingMode="Animated"
                                  SelectionChanged="ShortcutGrid_SelectionChanged"
                                  Loaded="ShortcutGrid_Loaded"
                                  SizeChanged="ShortcutGrid_SizeChanged"

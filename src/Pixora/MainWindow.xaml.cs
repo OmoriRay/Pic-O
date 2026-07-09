@@ -2607,10 +2607,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         for (var attempt = 0; attempt < 12; attempt++)
         {
             await Task.Delay(120);
-            if (TryEnsureExplorerSelectionVisible(folder, path, out var explorerHwnd))
+            if (TryEnsureExplorerSelectionVisible(folder, path))
             {
-                await Task.Delay(160);
-                TryNudgeExplorerSelectionTowardCenter(explorerHwnd);
                 return true;
             }
         }
@@ -2618,9 +2616,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return false;
     }
 
-    private static bool TryEnsureExplorerSelectionVisible(string folder, string path, out IntPtr explorerHwnd)
+    private static bool TryEnsureExplorerSelectionVisible(string folder, string path)
     {
-        explorerHwnd = IntPtr.Zero;
         try
         {
             var shellType = Type.GetTypeFromProgID("Shell.Application");
@@ -2656,7 +2653,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     }
 
                     view.SelectItem(item, ShellSelectItemFlags);
-                    explorerHwnd = new IntPtr(Convert.ToInt64(window.HWND));
                     return true;
                 }
                 catch
@@ -2670,31 +2666,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         return false;
-    }
-
-    private static bool TryNudgeExplorerSelectionTowardCenter(IntPtr explorerHwnd)
-    {
-        if (explorerHwnd == IntPtr.Zero)
-        {
-            return false;
-        }
-
-        try
-        {
-            var scrollPattern = FindExplorerScrollPattern(explorerHwnd);
-            if (scrollPattern is null || !scrollPattern.Current.VerticallyScrollable)
-            {
-                return false;
-            }
-
-            scrollPattern.Scroll(System.Windows.Automation.ScrollAmount.NoAmount, System.Windows.Automation.ScrollAmount.SmallDecrement);
-            scrollPattern.Scroll(System.Windows.Automation.ScrollAmount.NoAmount, System.Windows.Automation.ScrollAmount.SmallDecrement);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
     }
 
     private static System.Windows.Automation.ScrollPattern? FindExplorerScrollPattern(IntPtr explorerHwnd)

@@ -631,10 +631,14 @@ internal static class Program
         var window = new ShortcutSettingsWindow(ShortcutSettings.Load(), viewerSettings);
         var comboBox = window.FindName("ThumbnailDiskCacheSizeComboBox") as ComboBox;
         var cachePathText = window.FindName("ThumbnailDiskCachePathText") as TextBlock;
+        var generalPage = window.FindName("GeneralPage") as ScrollViewer;
 
         Assert(comboBox is not null, "Settings window should initialize the thumbnail disk cache capacity selector.");
         Assert(comboBox!.SelectedValue?.ToString() == "1024", "Settings window should select the persisted thumbnail disk cache capacity.");
         Assert(cachePathText?.Text.Contains("当前占用", StringComparison.Ordinal) == true, "Settings window should show thumbnail disk cache usage.");
+        Assert(generalPage?.ClipToBounds == true, "Settings page should clip scrolling content inside its viewport.");
+        Assert(TextOptions.GetTextRenderingMode(generalPage) == TextRenderingMode.Grayscale, "Settings page should use stable grayscale text rendering while scrolling.");
+        Assert(TextOptions.GetTextHintingMode(generalPage) == TextHintingMode.Animated, "Settings page should use animated text hinting while scrolling.");
     }
 
     private static void AssertThumbnailDiskCache(string root)
