@@ -1,0 +1,728 @@
+using PureView.Models;
+using PureView.Services;
+using System.Globalization;
+using System.IO;
+using System.Reflection;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+
+namespace PureView;
+
+public partial class ShortcutSettingsWindow : Window
+{
+    private readonly ShortcutSettings _source;
+    private readonly ShortcutSettings _working;
+    private readonly ViewerSettings _viewerSettings;
+    private ShortcutAction? _capturingAction;
+    private KeyboardShortcut? _shortcutBeingReplaced;
+    private bool _windowPlacementSaved;
+    private List<ShortcutRow> _shortcutRows = [];
+    private int _shortcutGridColumnCount = 1;
+    private const double ShortcutGridItemGap = 8;
+    private const double ShortcutGridMinimumTwoColumnItemWidth = 300;
+
+    public ShortcutSettingsWindow(ShortcutSettings settings, ViewerSettings viewerSettings)
+    {
+        InitializeComponent();
+        _source = settings;
+        _working = settings.Clone();
+        _viewerSettings = viewerSettings;
+        ApplySavedWindowPlacement();
+        SavedFileOpenBehaviorComboBox.SelectedValue = viewerSettings.SavedFileOpenBehavior.ToString();
+        ConfirmDeleteToRecycleBinCheckBox.IsChecked = viewerSettings.ConfirmDeleteToRecycleBin;
+        OpenLastFolderOnStartupCheckBox.IsChecked = viewerSettings.OpenLastFolderOnStartup;
+        ShowThumbnailSidebarCheckBox.IsChecked = viewerSettings.ShowThumbnailSidebar;
+        UseDoubleThumbnailColumnsCheckBox.IsChecked = viewerSettings.UseDoubleThumbnailColumns;
+        ShowDirectoryStatsCheckBox.IsChecked = viewerSettings.ShowDirectoryStats;
+        ShowAnimationControlsCheckBox.IsChecked = viewerSettings.ShowAnimationControls;
+        ShowOperationNotificationsCheckBox.IsChecked = viewerSettings.ShowOperationNotifications;
+        LoadFullResolutionWhenIdleCheckBox.IsChecked = viewerSettings.LoadFullResolutionWhenIdle;
+        SelectComboBoxValue(MainImageCacheComboBox, viewerSettings.MainImageCacheMegabytes, ViewerSettings.DefaultMainImageCacheMegabytes);
+        SelectComboBoxValue(DisplayPreviewCacheComboBox, viewerSettings.DisplayPreviewCacheMegabytes, ViewerSettings.DefaultDisplayPreviewCacheMegabytes);
+        LowMemoryProtectionCheckBox.IsChecked = viewerSettings.EnableLowMemoryProtection;
+        ThumbnailDiskCacheCheckBox.IsChecked = viewerSettings.UseThumbnailDiskCache;
+        ThumbnailDiskCachePathText.Text = $"保存位置：{ThumbnailDiskCache.DefaultCacheFolder}";
+        AppVersionText.Text = $"{AppInfo.Name} {GetAppVersion()}";
+        RefreshRows();
+        UpdateButtons();
+    }
+
+    private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (_windowPlacementSaved)
+        {
+            return;
+        }
+
+        try
+        {
+            SaveWindowPlacement();
+            _viewerSettings.Save();
+            _windowPlacementSaved = true;
+        }
+        catch (Exception ex)
+        {
+            ErrorLog.WriteException("SaveShortcutSettingsWindowPlacement", "保存设置窗口位置失败。", ex);
+        }
+    }
+
+    private void ApplySavedWindowPlacement()
+    {
+        if (_viewerSettings.ShortcutSettingsWindowWidth >= MinWidth)
+        {
+            Width = _viewerSettings.ShortcutSettingsWindowWidth;
+        }
+
+        if (_viewerSettings.ShortcutSettingsWindowHeight >= MinHeight)
+        {
+            Height = _viewerSettings.ShortcutSettingsWindowHeight;
+        }
+
+        var savedLeft = _viewerSettings.ShortcutSettingsWindowLeft;
+        var savedTop = _viewerSettings.ShortcutSettingsWindowTop;
+        if (savedLeft.HasValue
+            && savedTop.HasValue
+            && IsRectVisibleOnVirtualScreen(
+                savedLeft.Value,
+                savedTop.Value,
+                Width,
+                Height))
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            Left = savedLeft.Value;
+            Top = savedTop.Value;
+        }
+
+        if (_viewerSettings.ShortcutSettingsWindowMaximized)
+        {
+            WindowState = WindowState.Maximized;
+        }
+    }
+
+    private void SaveWindowPlacement()
+    {
+        _viewerSettings.ShortcutSettingsWindowMaximized = WindowState == WindowState.Maximized;
+        var bounds = RestoreBounds;
+        if (bounds.Width >= MinWidth)
+        {
+            _viewerSettings.ShortcutSettingsWindowWidth = bounds.Width;
+        }
+
+        if (bounds.Height >= MinHeight)
+        {
+            _viewerSettings.ShortcutSettingsWindowHeight = bounds.Height;
+        }
+
+        if (IsRectVisibleOnVirtualScreen(bounds.Left, bounds.Top, bounds.Width, bounds.Height))
+        {
+            _viewerSettings.ShortcutSettingsWindowLeft = bounds.Left;
+            _viewerSettings.ShortcutSettingsWindowTop = bounds.Top;
+        }
+    }
+
+    private static bool IsRectVisibleOnVirtualScreen(double left, double top, double width, double height)
+    {
+        if (double.IsNaN(left)
+            || double.IsNaN(top)
+            || width <= 0
+            || height <= 0)
+        {
+            return false;
+        }
+
+        var right = left + width;
+        var bottom = top + height;
+        var screenLeft = SystemParameters.VirtualScreenLeft;
+        var screenTop = SystemParameters.VirtualScreenTop;
+        var screenRight = screenLeft + SystemParameters.VirtualScreenWidth;
+        var screenBottom = screenTop + SystemParameters.VirtualScreenHeight;
+        return right > screenLeft
+            && left < screenRight
+            && bottom > screenTop
+            && top < screenBottom;
+    }
+    private void SettingsTab_Checked(object sender, RoutedEventArgs e)
+    {
+        if (GeneralPage is null
+            || ShortcutsPage is null
+            || StatusText is null
+            || ShortcutActionButtonsPanel is null)
+        {
+            return;
+        }
+
+        var showGeneral = GeneralTabButton.IsChecked == true;
+        GeneralPage.Visibility = showGeneral ? Visibility.Visible : Visibility.Collapsed;
+        ShortcutsPage.Visibility = showGeneral ? Visibility.Collapsed : Visibility.Visible;
+        StatusText.Visibility = showGeneral ? Visibility.Collapsed : Visibility.Visible;
+        ShortcutActionButtonsPanel.Visibility = showGeneral ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void RefreshRows()
+    {
+        var selectedAction = (ShortcutGrid.SelectedItem as ShortcutDisplayRow)?.Action;
+        var selectedShortcut = (ShortcutGrid.SelectedItem as ShortcutDisplayRow)?.Shortcut;
+        var rows = new List<ShortcutRow>();
+
+        foreach (var item in ShortcutSettings.ActionInfos.OrderBy(static item => GetShortcutActionSortIndex(item.Action)))
+        {
+            var shortcuts = _working.GetShortcuts(item.Action);
+            if (shortcuts.Count == 0)
+            {
+                rows.Add(new ShortcutRow(item.Action, item.Category, item.Name, null));
+                continue;
+            }
+
+            rows.AddRange(shortcuts.Select(shortcut => new ShortcutRow(item.Action, item.Category, item.Name, shortcut)));
+        }
+
+        _shortcutRows = rows;
+        ApplyShortcutRows(selectedAction, selectedShortcut);
+        UpdateButtons();
+    }
+
+    private void ShortcutGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateButtons();
+    }
+
+    private void ShortcutGrid_Loaded(object sender, RoutedEventArgs e)
+    {
+        UpdateShortcutGridItemWidth();
+    }
+
+    private void ShortcutGrid_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        UpdateShortcutGridItemWidth();
+    }
+
+    private void UpdateShortcutGridItemWidth()
+    {
+        var availableWidth = ShortcutGrid.ActualWidth;
+        if (double.IsNaN(availableWidth) || availableWidth <= 0)
+        {
+            return;
+        }
+
+        var contentWidth = Math.Max(0, availableWidth - SystemParameters.VerticalScrollBarWidth - 2);
+        var twoColumnItemWidth = Math.Floor((contentWidth - ShortcutGridItemGap * 2) / 2);
+        var useTwoColumns = twoColumnItemWidth >= ShortcutGridMinimumTwoColumnItemWidth;
+        var columnCount = useTwoColumns ? 2 : 1;
+        var itemWidth = useTwoColumns
+            ? twoColumnItemWidth
+            : Math.Floor(contentWidth - ShortcutGridItemGap);
+
+        if (itemWidth <= 0)
+        {
+            return;
+        }
+
+        if (ShortcutGrid.Tag is not double currentWidth || Math.Abs(currentWidth - itemWidth) >= 0.5)
+        {
+            ShortcutGrid.Tag = itemWidth;
+        }
+
+        if (_shortcutGridColumnCount == columnCount)
+        {
+            return;
+        }
+
+        var selectedAction = (ShortcutGrid.SelectedItem as ShortcutDisplayRow)?.Action;
+        var selectedShortcut = (ShortcutGrid.SelectedItem as ShortcutDisplayRow)?.Shortcut;
+        _shortcutGridColumnCount = columnCount;
+        ApplyShortcutRows(selectedAction, selectedShortcut);
+    }
+
+
+    private void ApplyShortcutRows(ShortcutAction? selectedAction = null, KeyboardShortcut? selectedShortcut = null)
+    {
+        var rows = ArrangeShortcutRowsForDisplay(_shortcutRows, _shortcutGridColumnCount);
+        var displayRows = CreateShortcutDisplayRows(rows, _shortcutGridColumnCount);
+        ShortcutGrid.ItemsSource = displayRows;
+        ShortcutGrid.SelectedItem = displayRows.FirstOrDefault(row =>
+            row.Action == selectedAction &&
+            ShortcutsEqual(row.Shortcut, selectedShortcut)) ??
+            displayRows.FirstOrDefault(row => row.Action == selectedAction) ??
+            displayRows.FirstOrDefault();
+    }
+
+
+    private static IReadOnlyList<ShortcutDisplayRow> CreateShortcutDisplayRows(IReadOnlyList<ShortcutRow> rows, int columnCount)
+    {
+        var displayRows = new List<ShortcutDisplayRow>(rows.Count);
+        var categoryByColumn = new string?[Math.Max(1, columnCount)];
+        for (var index = 0; index < rows.Count; index++)
+        {
+            var row = rows[index];
+            var columnIndex = index % categoryByColumn.Length;
+            var categoryText = row.Category == categoryByColumn[columnIndex] ? string.Empty : row.Category;
+            displayRows.Add(new ShortcutDisplayRow(row, categoryText));
+            categoryByColumn[columnIndex] = row.Category;
+        }
+
+        return displayRows;
+    }
+    private static IReadOnlyList<ShortcutRow> ArrangeShortcutRowsForDisplay(IReadOnlyList<ShortcutRow> rows, int columnCount)
+    {
+        if (columnCount <= 1 || rows.Count <= columnCount)
+        {
+            return rows;
+        }
+
+        var arranged = new List<ShortcutRow>(rows.Count);
+        var rowCount = (rows.Count + columnCount - 1) / columnCount;
+        for (var rowIndex = 0; rowIndex < rowCount; rowIndex++)
+        {
+            for (var columnIndex = 0; columnIndex < columnCount; columnIndex++)
+            {
+                var sourceIndex = columnIndex * rowCount + rowIndex;
+                if (sourceIndex < rows.Count)
+                {
+                    arranged.Add(rows[sourceIndex]);
+                }
+            }
+        }
+
+        return arranged;
+    }
+    private void EditButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ShortcutGrid.SelectedItem is not ShortcutDisplayRow row)
+        {
+            StatusText.Text = "请先选择一行。";
+            return;
+        }
+
+        _capturingAction = row.Action;
+        _shortcutBeingReplaced = row.Shortcut;
+        StatusText.Text = row.Shortcut is null
+            ? $"正在给“{row.ActionName}”设置快捷键。按新快捷键，Esc 取消。"
+            : $"正在修改“{row.ActionName}”的 {row.ShortcutText}。按新快捷键，Esc 取消。";
+        Focus();
+    }
+
+    private void AddButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ShortcutGrid.SelectedItem is not ShortcutDisplayRow row)
+        {
+            StatusText.Text = "请先选择一个功能。";
+            return;
+        }
+
+        _capturingAction = row.Action;
+        _shortcutBeingReplaced = null;
+        StatusText.Text = $"正在给“{row.ActionName}”添加快捷键。按新快捷键，Esc 取消。";
+        Focus();
+    }
+
+    private void DeleteButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ShortcutGrid.SelectedItem is not ShortcutDisplayRow row)
+        {
+            StatusText.Text = "请先选择一行。";
+            return;
+        }
+
+        if (row.Shortcut is null)
+        {
+            StatusText.Text = "该功能当前没有可删除的快捷键。";
+            return;
+        }
+
+        _capturingAction = null;
+        _shortcutBeingReplaced = null;
+        _working.RemoveShortcut(row.Action, row.Shortcut);
+        RefreshRows();
+        StatusText.Text = $"已删除“{row.ActionName}”的 {row.ShortcutText}，点击保存后生效。";
+    }
+
+    private void ResetButton_Click(object sender, RoutedEventArgs e)
+    {
+        _capturingAction = null;
+        _shortcutBeingReplaced = null;
+        _working.ResetToDefaults();
+        RefreshRows();
+        StatusText.Text = "已恢复默认快捷键，点击保存后生效。";
+    }
+
+    private void ClearAllButton_Click(object sender, RoutedEventArgs e)
+    {
+        var confirm = MessageBox.Show(
+            this,
+            "确定清空所有快捷键吗？\n\n清空后需要点击保存才会生效，也可以点击“恢复默认”找回默认快捷键。",
+            "清空所有快捷键",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+
+        if (confirm != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        _capturingAction = null;
+        _shortcutBeingReplaced = null;
+        _working.ClearAll();
+        RefreshRows();
+        StatusText.Text = "已清空所有快捷键，点击保存后生效。";
+    }
+
+    private void SaveButton_Click(object sender, RoutedEventArgs e)
+    {
+        _source.ReplaceWith(_working);
+        try
+        {
+            _source.Save();
+            _viewerSettings.SavedFileOpenBehavior = GetSelectedSavedFileOpenBehavior();
+            _viewerSettings.ConfirmDeleteToRecycleBin = ConfirmDeleteToRecycleBinCheckBox.IsChecked == true;
+            _viewerSettings.OpenLastFolderOnStartup = OpenLastFolderOnStartupCheckBox.IsChecked == true;
+            _viewerSettings.ShowThumbnailSidebar = ShowThumbnailSidebarCheckBox.IsChecked == true;
+            _viewerSettings.UseDoubleThumbnailColumns = UseDoubleThumbnailColumnsCheckBox.IsChecked == true;
+            _viewerSettings.ShowDirectoryStats = ShowDirectoryStatsCheckBox.IsChecked == true;
+            _viewerSettings.ShowAnimationControls = ShowAnimationControlsCheckBox.IsChecked == true;
+            _viewerSettings.ShowOperationNotifications = ShowOperationNotificationsCheckBox.IsChecked == true;
+            _viewerSettings.LoadFullResolutionWhenIdle = LoadFullResolutionWhenIdleCheckBox.IsChecked == true;
+            _viewerSettings.MainImageCacheMegabytes = GetSelectedMegabytes(MainImageCacheComboBox, ViewerSettings.DefaultMainImageCacheMegabytes);
+            _viewerSettings.DisplayPreviewCacheMegabytes = GetSelectedMegabytes(DisplayPreviewCacheComboBox, ViewerSettings.DefaultDisplayPreviewCacheMegabytes);
+            _viewerSettings.EnableLowMemoryProtection = LowMemoryProtectionCheckBox.IsChecked == true;
+            _viewerSettings.UseThumbnailDiskCache = ThumbnailDiskCacheCheckBox.IsChecked == true;
+            SaveWindowPlacement();
+            _viewerSettings.Save();
+            _windowPlacementSaved = true;
+        }
+        catch (Exception ex)
+        {
+            ErrorLog.WriteException("SaveSettings", "保存设置失败。", ex);
+            MessageBox.Show(this, $"保存设置失败：\n{ex.Message}", AppInfo.Name, MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        DialogResult = true;
+        Close();
+    }
+
+    private void RegisterFileAssociationsButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var processPath = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(processPath) || !File.Exists(processPath))
+            {
+                throw new FileNotFoundException($"找不到当前 {AppInfo.Name} 程序文件。", processPath);
+            }
+
+            FileAssociationService.Register(processPath);
+            if (ShowOperationNotificationsCheckBox.IsChecked == true)
+            {
+                MessageBox.Show(
+                    this,
+                    $"已把常见图片格式加入 Windows“打开方式”的 {AppInfo.Name} 项。",
+                    "文件关联",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorLog.WriteException("RegisterFileAssociations", "设置文件关联失败。", ex);
+            MessageBox.Show(this, $"设置文件关联失败：\n{ex.Message}", AppInfo.Name, MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void RegisterAndOpenDefaultAppsButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var processPath = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(processPath) || !File.Exists(processPath))
+            {
+                throw new FileNotFoundException($"找不到当前 {AppInfo.Name} 程序文件。", processPath);
+            }
+
+            FileAssociationService.Register(processPath);
+            if (FileAssociationService.TrySetDefaultAssociationsSilently(out _))
+            {
+                return;
+            }
+
+            FileAssociationService.OpenDefaultAppsSettings();
+        }
+        catch (Exception ex)
+        {
+            ErrorLog.WriteException("RegisterAndOpenDefaultApps", "设置默认应用失败。", ex);
+            MessageBox.Show(this, $"设置默认应用失败：\n{ex.Message}", AppInfo.Name, MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private async void AdvancedDefaultAssociationsButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var processPath = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(processPath) || !File.Exists(processPath))
+            {
+                throw new FileNotFoundException($"找不到当前 {AppInfo.Name} 程序文件。", processPath);
+            }
+
+            FileAssociationService.Register(processPath);
+            if (!FileAssociationService.TryGetExternalDefaultToolPath(out var toolPath))
+            {
+                MessageBox.Show(
+                    this,
+                    $"未找到 SetUserFTA.exe。\n\n请把 SetUserFTA.exe 放到：\n{toolPath}\n\n这是高级模式使用的外部工具，{AppInfo.Name} 不内置该工具；请只使用你信任的来源。",
+                    "高级一键默认",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            var confirm = MessageBox.Show(
+                this,
+                $"高级模式会调用外部工具批量修改当前用户的默认图片应用关联。\n\n工具路径：\n{toolPath}\n\n这不是 Windows 公开推荐的默认应用设置方式，系统更新后可能失效。确定继续吗？",
+                "高级一键默认",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No);
+            if (confirm != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            var result = await Task.Run(() => FileAssociationService.SetDefaultAssociationsWithExternalTool(toolPath));
+            if (result.Failures.Count == 0)
+            {
+                MessageBox.Show(
+                    this,
+                    $"已完成：{result.Succeeded}/{result.Total} 个图片格式已设置为 {AppInfo.Name}。",
+                    "高级一键默认",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            var failures = string.Join("\n", result.Failures.Take(8).Select(item => $"{item.Extension}：{item.Message}"));
+            if (result.Failures.Count > 8)
+            {
+                failures += $"\n... 还有 {result.Failures.Count - 8} 项失败";
+            }
+
+            MessageBox.Show(
+                this,
+                $"部分格式设置失败：{result.Succeeded}/{result.Total} 成功。\n\n{failures}",
+                "高级一键默认",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+        catch (Exception ex)
+        {
+            ErrorLog.WriteException("AdvancedDefaultAssociations", "高级默认应用设置失败。", ex);
+            MessageBox.Show(this, $"高级默认应用设置失败：\n{ex.Message}", AppInfo.Name, MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void UnregisterFileAssociationsButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            FileAssociationService.Unregister();
+            if (ShowOperationNotificationsCheckBox.IsChecked == true)
+            {
+                MessageBox.Show(this, $"已取消 {AppInfo.Name} 的常见图片格式打开方式关联。", "文件关联", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorLog.WriteException("UnregisterFileAssociations", "取消文件关联失败。", ex);
+            MessageBox.Show(this, $"取消文件关联失败：\n{ex.Message}", AppInfo.Name, MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void CancelButton_Click(object sender, RoutedEventArgs e)
+    {
+        DialogResult = false;
+        Close();
+    }
+
+    private static void SelectComboBoxValue(ComboBox comboBox, int value, int fallback)
+    {
+        comboBox.SelectedValue = value.ToString(CultureInfo.InvariantCulture);
+        if (comboBox.SelectedIndex < 0)
+        {
+            comboBox.SelectedValue = fallback.ToString(CultureInfo.InvariantCulture);
+        }
+    }
+
+    private static int GetSelectedMegabytes(ComboBox comboBox, int fallback)
+    {
+        if (comboBox.SelectedValue is string selectedValue
+            && int.TryParse(selectedValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
+            && value > 0)
+        {
+            return value;
+        }
+
+        return fallback;
+    }
+
+    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (_capturingAction is null)
+        {
+            if (e.Key == Key.Delete && ShortcutGrid.IsKeyboardFocusWithin)
+            {
+                DeleteButton_Click(this, new RoutedEventArgs());
+                e.Handled = true;
+                return;
+            }
+
+            if (e.Key == Key.Escape)
+            {
+                DialogResult = false;
+                Close();
+                e.Handled = true;
+            }
+
+            return;
+        }
+
+        if (e.Key == Key.Escape)
+        {
+            _capturingAction = null;
+            _shortcutBeingReplaced = null;
+            StatusText.Text = "已取消修改。";
+            e.Handled = true;
+            return;
+        }
+
+        var shortcut = KeyboardShortcut.FromKeyEvent(e);
+        if (!KeyboardShortcut.IsValidInput(shortcut))
+        {
+            StatusText.Text = "不能只使用 Ctrl、Shift、Alt 或 Win。";
+            e.Handled = true;
+            return;
+        }
+
+        var action = _capturingAction.Value;
+        if (_working.FindConflict(action, shortcut) is { } conflict)
+        {
+            StatusText.Text = $"快捷键 {shortcut.ToDisplayText()} 已被“{ShortcutSettings.ActionNames[conflict]}”使用。";
+            e.Handled = true;
+            return;
+        }
+
+        if (IsDuplicateInCurrentAction(action, shortcut))
+        {
+            StatusText.Text = $"“{ShortcutSettings.ActionNames[action]}”已经有 {shortcut.ToDisplayText()}。";
+            e.Handled = true;
+            return;
+        }
+
+        _working.ReplaceShortcut(action, _shortcutBeingReplaced, shortcut);
+        _capturingAction = null;
+        _shortcutBeingReplaced = null;
+        RefreshRows();
+        StatusText.Text = "已修改，点击保存后生效。";
+        e.Handled = true;
+    }
+
+    private void UpdateButtons()
+    {
+        var hasRow = ShortcutGrid.SelectedItem is ShortcutDisplayRow;
+        var hasShortcut = ShortcutGrid.SelectedItem is ShortcutDisplayRow { Shortcut: not null };
+        EditButton.IsEnabled = hasRow;
+        AddButton.IsEnabled = hasRow;
+        DeleteButton.IsEnabled = hasShortcut;
+    }
+
+    private bool IsDuplicateInCurrentAction(ShortcutAction action, KeyboardShortcut shortcut)
+    {
+        return _working.GetShortcuts(action).Any(existing =>
+            existing.Matches(shortcut.Key, shortcut.Modifiers) &&
+            !ShortcutsEqual(existing, _shortcutBeingReplaced));
+    }
+
+    private SavedFileOpenBehavior GetSelectedSavedFileOpenBehavior()
+    {
+        var selectedValue = SavedFileOpenBehaviorComboBox.SelectedValue as string;
+        return Enum.TryParse<SavedFileOpenBehavior>(selectedValue, out var behavior)
+            ? behavior
+            : SavedFileOpenBehavior.None;
+    }
+
+    private static string GetAppVersion()
+    {
+        var assembly = typeof(ShortcutSettingsWindow).Assembly;
+        return assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? assembly.GetName().Version?.ToString()
+            ?? "unknown";
+    }
+
+    private static bool ShortcutsEqual(KeyboardShortcut? left, KeyboardShortcut? right)
+    {
+        if (left is null || right is null)
+        {
+            return left is null && right is null;
+        }
+
+        return left.Matches(right.Key, right.Modifiers);
+    }
+
+
+    private static int GetShortcutActionSortIndex(ShortcutAction action)
+    {
+        return action switch
+        {
+            ShortcutAction.PreviousImage => 10,
+            ShortcutAction.NextImage => 11,
+            ShortcutAction.CycleSortMode => 12,
+            ShortcutAction.ToggleAnimationPlayback => 13,
+            ShortcutAction.RestartAnimation => 14,
+            ShortcutAction.RotateLeft => 15,
+            ShortcutAction.RotateRight => 16,
+            ShortcutAction.ToggleFitActual => 30,
+            ShortcutAction.FitWindow => 31,
+            ShortcutAction.ActualSize => 32,
+            ShortcutAction.ZoomIn => 33,
+            ShortcutAction.ZoomOut => 34,
+            ShortcutAction.ToggleFullScreen => 35,
+            ShortcutAction.ToggleInfo => 36,
+            ShortcutAction.ToggleThumbnailSidebar => 37,
+            ShortcutAction.ToggleThumbnailColumns => 38,
+            ShortcutAction.OpenImage => 50,
+            ShortcutAction.OpenFolder => 51,
+            ShortcutAction.OpenContainingFolder => 52,
+            ShortcutAction.CopyFile => 53,
+            ShortcutAction.CopyPath => 54,
+            ShortcutAction.CopyName => 55,
+            ShortcutAction.ToggleFavorite => 56,
+            ShortcutAction.ToggleFavoritesView => 57,
+            ShortcutAction.SaveVideoCover => 58,
+            ShortcutAction.DeleteImage => 59,
+            ShortcutAction.BatchDeleteCurrentFolder => 60,
+            ShortcutAction.CropImage => 80,
+            ShortcutAction.CircleCropImage => 81,
+            ShortcutAction.CompressImage => 82,
+            ShortcutAction.OpenBatchCompressTools => 83,
+            ShortcutAction.SaveCrop => 100,
+            ShortcutAction.ShowShortcutSettings => 120,
+            ShortcutAction.CancelOrClose => 121,
+            _ => 1000 + (int)action,
+        };
+    }
+    private sealed record ShortcutDisplayRow(ShortcutRow Source, string CategoryText)
+    {
+        public ShortcutAction Action => Source.Action;
+
+        public string ActionName => Source.ActionName;
+
+        public KeyboardShortcut? Shortcut => Source.Shortcut;
+
+        public string ShortcutText => Source.ShortcutText;
+    }
+
+    private sealed record ShortcutRow(ShortcutAction Action, string Category, string ActionName, KeyboardShortcut? Shortcut)
+    {
+        public string ShortcutText => Shortcut?.ToDisplayText() ?? "未设置";
+    }
+}
