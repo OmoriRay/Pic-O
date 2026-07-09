@@ -17,6 +17,11 @@
     <ApplicationIcon>Assets\PicOApp.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Magick.NET-Q16-AnyCPU" Version="14.14.0" />
   </ItemGroup>
