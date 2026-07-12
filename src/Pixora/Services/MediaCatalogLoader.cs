@@ -5,7 +5,8 @@ public static class MediaCatalogLoader
     public static Task<ImageCatalog> LoadFolderAsync(
         string folder,
         ImageSortMode sortMode,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<int>? progress = null)
     {
         return Task.Run(() =>
         {
@@ -13,7 +14,7 @@ public static class MediaCatalogLoader
             {
                 SortMode = sortMode,
             };
-            catalog.LoadFromFolder(folder, cancellationToken);
+            catalog.LoadFromFolder(folder, cancellationToken, progress);
             return catalog;
         }, cancellationToken);
     }
@@ -21,7 +22,8 @@ public static class MediaCatalogLoader
     public static Task<ImageCatalog> LoadFromFileAsync(
         string path,
         ImageSortMode sortMode,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<int>? progress = null)
     {
         return Task.Run(() =>
         {
@@ -29,7 +31,7 @@ public static class MediaCatalogLoader
             {
                 SortMode = sortMode,
             };
-            catalog.LoadFromFile(path, cancellationToken);
+            catalog.LoadFromFile(path, cancellationToken, progress);
             return catalog;
         }, cancellationToken);
     }

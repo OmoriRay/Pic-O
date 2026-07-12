@@ -53,6 +53,11 @@ public sealed class ImageCatalog
 
     public void LoadFromFile(string path, CancellationToken cancellationToken)
     {
+        LoadFromFile(path, cancellationToken, progress: null);
+    }
+
+    public void LoadFromFile(string path, CancellationToken cancellationToken, IProgress<int>? progress)
+    {
         var fullPath = Path.GetFullPath(path);
         var directory = Path.GetDirectoryName(fullPath);
         if (string.IsNullOrWhiteSpace(directory))
@@ -64,7 +69,7 @@ public sealed class ImageCatalog
             return;
         }
 
-        var files = SortPaths(EnumerateSupportedMediaFiles(directory, cancellationToken));
+        var files = SortPaths(EnumerateSupportedMediaFiles(directory, cancellationToken, progress));
         cancellationToken.ThrowIfCancellationRequested();
 
         var index = files.FindIndex(p => string.Equals(p, fullPath, StringComparison.OrdinalIgnoreCase));
@@ -97,8 +102,13 @@ public sealed class ImageCatalog
 
     public void LoadFromFolder(string folder, CancellationToken cancellationToken)
     {
+        LoadFromFolder(folder, cancellationToken, progress: null);
+    }
+
+    public void LoadFromFolder(string folder, CancellationToken cancellationToken, IProgress<int>? progress)
+    {
         var fullFolder = Path.GetFullPath(folder);
-        _files = SortPaths(EnumerateSupportedMediaFiles(fullFolder, cancellationToken));
+        _files = SortPaths(EnumerateSupportedMediaFiles(fullFolder, cancellationToken, progress));
         cancellationToken.ThrowIfCancellationRequested();
 
         Index = _files.Count > 0 ? 0 : -1;
@@ -210,6 +220,53 @@ public sealed class ImageCatalog
         }
 
         Index = index;
+        return true;
+    }
+
+    public bool MoveToIndex(int index)
+    {
+        if (index < 0 || index >= _files.Count)
+        {
+            return false;
+        }
+
+        Index = index;
+        return true;
+    }
+
+    public bool RemovePath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        var fullPath = Path.GetFullPath(path);
+        var removedIndex = _files.FindIndex(item => string.Equals(item, fullPath, StringComparison.OrdinalIgnoreCase));
+        if (removedIndex < 0)
+        {
+            return false;
+        }
+
+        var currentPath = CurrentPath;
+        _files.RemoveAt(removedIndex);
+        if (_files.Count == 0)
+        {
+            Index = -1;
+            return true;
+        }
+
+        if (currentPath is not null && !string.Equals(currentPath, fullPath, StringComparison.OrdinalIgnoreCase))
+        {
+            var currentIndex = _files.FindIndex(item => string.Equals(item, currentPath, StringComparison.OrdinalIgnoreCase));
+            if (currentIndex >= 0)
+            {
+                Index = currentIndex;
+                return true;
+            }
+        }
+
+        Index = Math.Min(removedIndex, _files.Count - 1);
         return true;
     }
 
@@ -353,15 +410,27 @@ public sealed class ImageCatalog
         }
     }
 
-    private static IEnumerable<string> EnumerateSupportedMediaFiles(string folder, CancellationToken cancellationToken)
+    private static IEnumerable<string> EnumerateSupportedMediaFiles(
+        string folder,
+        CancellationToken cancellationToken,
+        IProgress<int>? progress)
     {
+        var supportedCount = 0;
         foreach (var path in Directory.EnumerateFiles(folder))
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (IsSupportedMediaPath(path))
             {
+                supportedCount++;
+                if (supportedCount == 1 || supportedCount % 250 == 0)
+                {
+                    progress?.Report(supportedCount);
+                }
+
                 yield return path;
             }
         }
+
+        progress?.Report(supportedCount);
     }
 }

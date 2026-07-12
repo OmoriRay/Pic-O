@@ -48,6 +48,7 @@ public sealed class ShortcutSettings
         new(ShortcutAction.ToggleInfo, "显示/隐藏图片信息", "查看", ShortcutContext.Viewer),
         new(ShortcutAction.ToggleThumbnailSidebar, "显示/隐藏缩略图栏", "查看", ShortcutContext.Viewer),
         new(ShortcutAction.ToggleThumbnailColumns, "缩略图单列/双列", "查看", ShortcutContext.Viewer),
+        new(ShortcutAction.ShowQuickSearch, "打开快速搜索", "查看", ShortcutContext.Viewer),
 
         new(ShortcutAction.CropImage, "裁剪图片", "编辑", ShortcutContext.Viewer),
         new(ShortcutAction.CircleCropImage, "圆形裁剪", "编辑", ShortcutContext.Viewer),
@@ -196,6 +197,7 @@ public sealed class ShortcutSettings
         _bindings[ShortcutAction.ToggleInfo] = [new(Key.I, ModifierKeys.None)];
         _bindings[ShortcutAction.ToggleThumbnailSidebar] = [new(Key.B, ModifierKeys.Control)];
         _bindings[ShortcutAction.ToggleThumbnailColumns] = [new(Key.B, ModifierKeys.Control | ModifierKeys.Shift)];
+        _bindings[ShortcutAction.ShowQuickSearch] = [new(Key.K, ModifierKeys.Control)];
         _bindings[ShortcutAction.OpenImage] = [new(Key.O, ModifierKeys.None)];
         _bindings[ShortcutAction.OpenFolder] = [new(Key.O, ModifierKeys.Control)];
         _bindings[ShortcutAction.ShowShortcutSettings] = [new(Key.OemComma, ModifierKeys.Control)];

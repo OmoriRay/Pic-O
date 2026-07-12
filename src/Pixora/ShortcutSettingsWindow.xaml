@@ -85,6 +85,10 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
 
             <Border HorizontalAlignment="Left"
                     Background="#12161D"
@@ -107,7 +111,58 @@
                 </StackPanel>
             </Border>
 
+            <Border Grid.Column="1"
+                    Width="250"
+                    Height="38"
+                    HorizontalAlignment="Right"
+                    Background="#15191F"
+                    BorderBrush="#303A48"
+                    BorderThickness="1"
+                    CornerRadius="9"
+                    Padding="11,0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="26" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="&#xE721;"
+                               FontFamily="Segoe MDL2 Assets"
+                               FontSize="14"
+                               Foreground="#8290A0"
+                               VerticalAlignment="Center" />
+                    <Grid Grid.Column="1">
+                        <TextBox x:Name="SettingsSearchTextBox"
+                                 Background="Transparent"
+                                 BorderThickness="0"
+                                 Foreground="#F2F5F7"
+                                 CaretBrush="#65BFF2"
+                                 FontSize="13"
+                                 Padding="0"
+                                 VerticalContentAlignment="Center"
+                                 TextChanged="SettingsSearchTextBox_TextChanged">
+                            <TextBox.Template>
+                                <ControlTemplate TargetType="{x:Type TextBox}">
+                                    <ScrollViewer x:Name="PART_ContentHost"
+                                                  Background="Transparent"
+                                                  BorderThickness="0"
+                                                  Focusable="False"
+                                                  HorizontalScrollBarVisibility="Hidden"
+                                                  VerticalScrollBarVisibility="Hidden" />
+                                </ControlTemplate>
+                            </TextBox.Template>
+                        </TextBox>
+                        <TextBlock x:Name="SettingsSearchPlaceholderText"
+                                   Text="搜索设置或快捷键"
+                                   Foreground="#748294"
+                                   FontSize="13"
+                                   VerticalAlignment="Center"
+                                   IsHitTestVisible="False" />
+                    </Grid>
+                </Grid>
+            </Border>
+
             <Grid Grid.Row="1"
+                  Grid.ColumnSpan="2"
                   ClipToBounds="True">
                 <ScrollViewer x:Name="GeneralPage"
                               Background="#101216"
@@ -127,7 +182,8 @@
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
-                        <Border Background="#171A20"
+                        <Border x:Name="FileBehaviorSettingsSection"
+                                Background="#171A20"
                                 BorderBrush="#2F3B48"
                                 BorderThickness="1"
                                 CornerRadius="8"
@@ -156,6 +212,18 @@
                                           Content="启动时自动打开上次目录"
                                           Margin="0,16,0,0"
                                           Foreground="#DCE4EC" />
+                                <CheckBox x:Name="ReuseExistingWindowCheckBox"
+                                          Content="双击图片时复用已有 Pixora 窗口（重启后生效）"
+                                          Margin="0,16,0,0"
+                                          Foreground="#DCE4EC" />
+                                <CheckBox x:Name="KeepViewStateWhenNavigatingCheckBox"
+                                          Content="切换图片时保持当前缩放和位置"
+                                          Margin="0,16,0,0"
+                                          Foreground="#DCE4EC" />
+                                <CheckBox x:Name="WatchFolderChangesCheckBox"
+                                          Content="自动刷新外部新增、重命名或删除的文件"
+                                          Margin="0,16,0,0"
+                                          Foreground="#DCE4EC" />
                                 <TextBlock Text="打开目录"
                                            Foreground="#AEB8C4"
                                            FontSize="12"
@@ -168,7 +236,8 @@
                             </StackPanel>
                         </Border>
 
-                        <Border Background="#171A20"
+                        <Border x:Name="InterfaceSettingsSection"
+                                Background="#171A20"
                                 Grid.Column="2"
                                 BorderBrush="#2F3B48"
                                 BorderThickness="1"
@@ -187,6 +256,28 @@
                                           Content="使用双列缩略图"
                                           Margin="0,16,0,0"
                                           Foreground="#DCE4EC" />
+                                <TextBlock Text="快速搜索默认方式"
+                                           Foreground="#AEB8C4"
+                                           FontSize="12"
+                                           Margin="0,16,0,6" />
+                                <ComboBox x:Name="QuickSearchModeComboBox"
+                                          HorizontalAlignment="Stretch"
+                                          SelectedValuePath="Tag">
+                                    <ComboBoxItem Content="按图片序号跳转" Tag="Index" />
+                                    <ComboBoxItem Content="按文件名查找" Tag="FileName" />
+                                </ComboBox>
+                                <CheckBox x:Name="ShowQuickSearchOnStartupCheckBox"
+                                          Content="启动时自动显示快速搜索"
+                                          Margin="0,16,0,0"
+                                          Foreground="#DCE4EC" />
+                                <CheckBox x:Name="RememberMainWindowPlacementCheckBox"
+                                          Content="记住主窗口大小、位置和最大化状态"
+                                          Margin="0,16,0,0"
+                                          Foreground="#DCE4EC" />
+                                <CheckBox x:Name="StartMainWindowMaximizedCheckBox"
+                                          Content="启动时始终最大化主窗口"
+                                          Margin="0,16,0,0"
+                                          Foreground="#DCE4EC" />
                                 <CheckBox x:Name="ShowDirectoryStatsCheckBox"
                                           Content="显示当前目录统计信息"
                                           Margin="0,16,0,0"
@@ -203,14 +294,27 @@
                                           Content="空闲时后台加载当前原图"
                                           Margin="0,16,0,0"
                                           Foreground="#DCE4EC" />
-                                <TextBlock Text="性能"
-                                           Foreground="#AEB8C4"
-                                           FontSize="12"
-                                           Margin="0,18,0,6" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border x:Name="PerformanceSettingsSection"
+                                Grid.Row="1"
+                                Grid.Column="2"
+                                Margin="0,14,0,0"
+                                Background="#171A20"
+                                BorderBrush="#2F3B48"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="16">
+                            <StackPanel>
+                                <TextBlock Text="性能与缓存"
+                                           Foreground="#F2F5F7"
+                                           FontSize="15"
+                                           FontWeight="SemiBold" />
                                 <TextBlock Text="原图缓存"
                                            Foreground="#AEB8C4"
                                            FontSize="12"
-                                           Margin="0,0,0,6" />
+                                           Margin="0,14,0,6" />
                                 <ComboBox x:Name="MainImageCacheComboBox"
                                           HorizontalAlignment="Stretch"
                                           SelectedValuePath="Tag">
@@ -251,32 +355,57 @@
                                     <ComboBoxItem Content="1 GB" Tag="1024" />
                                     <ComboBoxItem Content="2 GB" Tag="2048" />
                                 </ComboBox>
-                                <StackPanel Orientation="Horizontal"
-                                            Margin="0,10,0,0">
+                                <WrapPanel Orientation="Horizontal"
+                                           Margin="0,10,0,0">
                                     <Button Content="清理缩略图缓存"
                                             MinWidth="116"
-                                            Margin="0,0,8,0"
                                             Click="ClearThumbnailDiskCacheButton_Click" />
-                                    <Button Content="打开错误日志位置"
-                                            MinWidth="116"
-                                            Click="OpenErrorLogFolderButton_Click" />
-                                </StackPanel>
+                                </WrapPanel>
                                 <TextBlock x:Name="ThumbnailDiskCachePathText"
                                            Foreground="#AEB8C4"
                                            FontSize="11"
                                            TextWrapping="Wrap"
                                            Margin="26,6,0,0" />
-                                <TextBlock Text="关于"
-                                           Foreground="#AEB8C4"
-                                           FontSize="12"
-                                           Margin="0,18,0,6" />
-                                <TextBlock x:Name="AppVersionText"
-                                           Foreground="#DCE4EC"
-                                           FontSize="12" />
                             </StackPanel>
                         </Border>
 
-                        <Border Grid.Row="1"
+                        <Border x:Name="DiagnosticsSettingsSection"
+                                Grid.Row="1"
+                                Grid.Column="0"
+                                Margin="0,14,0,0"
+                                Background="#171A20"
+                                BorderBrush="#2F3B48"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="16">
+                            <StackPanel>
+                                <TextBlock Text="诊断与关于"
+                                           Foreground="#F2F5F7"
+                                           FontSize="15"
+                                           FontWeight="SemiBold" />
+                                <TextBlock x:Name="AppVersionText"
+                                           Margin="0,14,0,0"
+                                           Foreground="#DCE4EC"
+                                           FontSize="12" />
+                                <CheckBox x:Name="IncludePrivatePathsInDiagnosticsCheckBox"
+                                          Content="诊断信息包含本机完整路径（默认隐藏）"
+                                          Margin="0,14,0,0"
+                                          Foreground="#DCE4EC" />
+                                <WrapPanel Orientation="Horizontal"
+                                           Margin="0,14,0,0">
+                                    <Button Content="打开错误日志位置"
+                                            MinWidth="116"
+                                            Margin="0,0,8,0"
+                                            Click="OpenErrorLogFolderButton_Click" />
+                                    <Button Content="复制诊断信息"
+                                            MinWidth="116"
+                                            Click="CopyDiagnosticsButton_Click" />
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border x:Name="FileAssociationsSettingsSection"
+                                Grid.Row="2"
                                 Grid.ColumnSpan="3"
                                 Background="#171A20"
                                 BorderBrush="#2F3B48"

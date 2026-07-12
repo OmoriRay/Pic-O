@@ -33,6 +33,7 @@ public enum ShortcutAction
     ToggleInfo,
     ToggleThumbnailSidebar,
     ToggleThumbnailColumns,
+    ShowQuickSearch,
     OpenImage,
     OpenFolder,
     ShowShortcutSettings,

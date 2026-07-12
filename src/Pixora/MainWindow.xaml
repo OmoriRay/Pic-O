@@ -20,6 +20,7 @@
         UseLayoutRounding="True"
         SnapsToDevicePixels="True"
         Focusable="True"
+        InputMethod.IsInputMethodEnabled="False"
         Loaded="Window_Loaded"
         Closing="Window_Closing"
         PreviewKeyDown="Window_KeyDown"
@@ -279,10 +280,45 @@
                     CornerRadius="8"
                     Padding="18,12"
                     Visibility="Collapsed">
-                <TextBlock x:Name="LoadingText"
-                           Text="正在打开..."
-                           Foreground="#E6EBF0"
-                           FontSize="14" />
+                <StackPanel>
+                    <TextBlock x:Name="LoadingText"
+                               Text="正在打开..."
+                               Foreground="#E6EBF0"
+                               FontSize="14"
+                               TextAlignment="Center" />
+                    <Button x:Name="CancelFolderLoadButton"
+                            Content="取消扫描"
+                            Margin="0,10,0,0"
+                            MinWidth="88"
+                            HorizontalAlignment="Center"
+                            Visibility="Collapsed"
+                            Click="CancelFolderLoadButton_Click" />
+                </StackPanel>
+            </Border>
+
+            <Border x:Name="CatalogScanPanel"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Top"
+                    Margin="14"
+                    Background="#E0181B21"
+                    BorderBrush="#3B4654"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Padding="10,7"
+                    Visibility="Collapsed">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock x:Name="CatalogScanText"
+                               Text="正在补齐目录..."
+                               VerticalAlignment="Center"
+                               Foreground="#E6EBF0"
+                               FontSize="12" />
+                    <Button Content="取消"
+                            Margin="8,0,0,0"
+                            MinWidth="48"
+                            MinHeight="26"
+                            Padding="8,3"
+                            Click="CancelCatalogCompletionButton_Click" />
+                </StackPanel>
             </Border>
 
             <Border x:Name="VideoBadge"
@@ -401,7 +437,7 @@
                         <Button x:Name="ThumbnailColumnToggleButton"
                                 Grid.Row="0"
                                 Grid.Column="1"
-                                Content="单列"
+                                Content="双列"
                                 MinWidth="44"
                                 MinHeight="26"
                                 Padding="8,3"
@@ -469,7 +505,7 @@
                          Background="Transparent"
                          BorderThickness="0"
                          Foreground="#F2F5F7"
-                         Padding="4"
+                         Padding="8,4,4,4"
                          ScrollViewer.CanContentScroll="True"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                          ScrollViewer.VerticalScrollBarVisibility="Auto"
@@ -576,20 +612,23 @@
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <ItemsControl ItemsSource="{Binding Items}"
-                                          Margin="0,0,4,0">
+                                          HorizontalAlignment="Stretch"
+                                          Margin="0,0,1.5,0">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
-                                        <StackPanel Orientation="Horizontal" />
+                                        <UniformGrid Rows="1"
+                                                     Columns="{Binding DataContext.ThumbnailColumnCount, RelativeSource={RelativeSource AncestorType={x:Type ListBox}}}" />
                                     </ItemsPanelTemplate>
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <Border Width="{Binding DataContext.ThumbnailItemWidth, RelativeSource={RelativeSource AncestorType={x:Type ListBox}}}"
-                                                Margin="3"
+                                                HorizontalAlignment="Center"
+                                                Margin="{Binding DataContext.ThumbnailItemMargin, RelativeSource={RelativeSource AncestorType={x:Type ListBox}}}"
                                                 BorderThickness="1"
                                                 CornerRadius="7"
                                                 Cursor="Hand"
-                                                Padding="4"
+                                                Padding="{Binding DataContext.ThumbnailItemPadding, RelativeSource={RelativeSource AncestorType={x:Type ListBox}}}"
                                                 MouseLeftButtonUp="ThumbnailCell_MouseLeftButtonUp">
                                             <Border.Style>
                                                 <Style TargetType="{x:Type Border}">
@@ -697,6 +736,291 @@
                 </ListBox>
             </DockPanel>
         </Border>
+
+        <Grid x:Name="QuickSearchOverlay"
+              Grid.ColumnSpan="2"
+              Height="44"
+              HorizontalAlignment="Stretch"
+              VerticalAlignment="Top"
+              Margin="0,28,0,0"
+              Panel.ZIndex="200"
+              Opacity="0"
+              Visibility="Collapsed"
+              IsHitTestVisible="False"
+              RenderTransformOrigin="0.5,0">
+            <Grid.RenderTransform>
+                <TransformGroup>
+                    <ScaleTransform x:Name="QuickSearchScaleTransform"
+                                    ScaleX="0.96"
+                                    ScaleY="0.96" />
+                    <TranslateTransform x:Name="QuickSearchTranslateTransform"
+                                        Y="-18" />
+                </TransformGroup>
+            </Grid.RenderTransform>
+
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="27.5*" />
+                <ColumnDefinition Width="45*" />
+                <ColumnDefinition Width="27.5*" />
+            </Grid.ColumnDefinitions>
+
+            <Border x:Name="QuickSearchGlass"
+                    Grid.Column="1"
+                    MinWidth="360"
+                    MaxWidth="640"
+                    Background="#01000000"
+                    BorderThickness="0"
+                    CornerRadius="22"
+                    Padding="0"
+                    SizeChanged="QuickSearchGlass_SizeChanged">
+                <Border.Effect>
+                    <DropShadowEffect x:Name="QuickSearchShadow"
+                                      BlurRadius="22"
+                                      ShadowDepth="4"
+                                      Direction="270"
+                                      Color="#90000000"
+                                      Opacity="0.34" />
+                </Border.Effect>
+                <Border.Triggers>
+                    <EventTrigger RoutedEvent="MouseEnter">
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <ColorAnimation Storyboard.TargetName="QuickSearchTintBrush"
+                                                Storyboard.TargetProperty="Color"
+                                                To="#8A303940"
+                                                Duration="0:0:0.14">
+                                    <ColorAnimation.EasingFunction>
+                                        <QuadraticEase EasingMode="EaseOut" />
+                                    </ColorAnimation.EasingFunction>
+                                </ColorAnimation>
+                                <DoubleAnimation Storyboard.TargetName="QuickSearchBackdrop"
+                                                 Storyboard.TargetProperty="Opacity"
+                                                 To="0.66"
+                                                 Duration="0:0:0.14" />
+                                <DoubleAnimation Storyboard.TargetName="QuickSearchShadow"
+                                                 Storyboard.TargetProperty="Opacity"
+                                                 To="0.48"
+                                                 Duration="0:0:0.14" />
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </EventTrigger>
+                    <EventTrigger RoutedEvent="MouseLeave">
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <ColorAnimation Storyboard.TargetName="QuickSearchTintBrush"
+                                                Storyboard.TargetProperty="Color"
+                                                To="#68505A62"
+                                                Duration="0:0:0.18">
+                                    <ColorAnimation.EasingFunction>
+                                        <QuadraticEase EasingMode="EaseOut" />
+                                    </ColorAnimation.EasingFunction>
+                                </ColorAnimation>
+                                <DoubleAnimation Storyboard.TargetName="QuickSearchBackdrop"
+                                                 Storyboard.TargetProperty="Opacity"
+                                                 To="0.78"
+                                                 Duration="0:0:0.18" />
+                                <DoubleAnimation Storyboard.TargetName="QuickSearchShadow"
+                                                 Storyboard.TargetProperty="Opacity"
+                                                 To="0.34"
+                                                 Duration="0:0:0.18" />
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </EventTrigger>
+                </Border.Triggers>
+                <Grid>
+                    <Border x:Name="QuickSearchBackdrop"
+                            Margin="1"
+                            CornerRadius="21"
+                            Opacity="0.78"
+                            IsHitTestVisible="False">
+                        <Border.Background>
+                            <VisualBrush x:Name="QuickSearchBackdropBrush"
+                                         Visual="{Binding ElementName=ViewerSurface}"
+                                         ViewboxUnits="Absolute"
+                                         Stretch="Fill" />
+                        </Border.Background>
+                        <Border.Effect>
+                            <BlurEffect Radius="18"
+                                        KernelType="Gaussian"
+                                        RenderingBias="Quality" />
+                        </Border.Effect>
+                    </Border>
+
+                    <Border Margin="1"
+                            CornerRadius="21"
+                            IsHitTestVisible="False">
+                        <Border.Background>
+                            <SolidColorBrush x:Name="QuickSearchTintBrush"
+                                             Color="#68505A62" />
+                        </Border.Background>
+                    </Border>
+
+                    <Border Margin="1"
+                            CornerRadius="21"
+                            IsHitTestVisible="False">
+                        <Border.Background>
+                            <RadialGradientBrush Center="0.18,0.08"
+                                                 GradientOrigin="0.12,0.02"
+                                                 RadiusX="0.95"
+                                                 RadiusY="1.2">
+                                <GradientStop Offset="0" Color="#38FFFFFF" />
+                                <GradientStop Offset="0.42" Color="#10FFFFFF" />
+                                <GradientStop Offset="1" Color="#10000000" />
+                            </RadialGradientBrush>
+                        </Border.Background>
+                    </Border>
+
+                    <Border Margin="1"
+                            Background="Transparent"
+                            BorderBrush="#55FFFFFF"
+                            BorderThickness="1"
+                            CornerRadius="21"
+                            IsHitTestVisible="False" />
+
+                    <Grid Margin="12,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="46" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <Button x:Name="QuickSearchModeButton"
+                                Grid.Column="0"
+                                Width="41"
+                                Height="38"
+                                Padding="0"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Focusable="False"
+                                Cursor="Hand"
+                                Click="QuickSearchModeButton_Click">
+                            <Button.Template>
+                                <ControlTemplate TargetType="{x:Type Button}">
+                                    <ContentPresenter HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center" />
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="Opacity" Value="0.82" />
+                                        </Trigger>
+                                        <Trigger Property="IsPressed" Value="True">
+                                            <Setter Property="Opacity" Value="0.62" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Button.Template>
+                            <Button.Content>
+                                <Grid Width="36" Height="34">
+                                    <Image Width="28"
+                                           Height="28"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           RenderOptions.BitmapScalingMode="HighQuality">
+                                        <Image.Source>
+                                            <BitmapImage UriSource="/Pixora;component/Assets/PixoraIcon.png"
+                                                         DecodePixelWidth="64"
+                                                         CacheOption="OnLoad" />
+                                        </Image.Source>
+                                    </Image>
+                                </Grid>
+                            </Button.Content>
+                        </Button>
+
+                        <Grid Grid.Column="1"
+                              Margin="4,0,0,0">
+                            <TextBox x:Name="QuickSearchTextBox"
+                                     Height="38"
+                                     Padding="0,1"
+                                     Background="Transparent"
+                                     BorderThickness="0"
+                                     FocusVisualStyle="{x:Null}"
+                                     Foreground="#FFFFFF"
+                                     CaretBrush="#FFFFFF"
+                                     SelectionBrush="#58FFFFFF"
+                                     FontSize="16"
+                                     FontWeight="Normal"
+                                     VerticalContentAlignment="Center"
+                                     InputMethod.IsInputMethodEnabled="True"
+                                     TextChanged="QuickSearchTextBox_TextChanged">
+                                <TextBox.Template>
+                                    <ControlTemplate TargetType="{x:Type TextBox}">
+                                        <Border Background="Transparent"
+                                                BorderThickness="0"
+                                                Padding="{TemplateBinding Padding}">
+                                            <ScrollViewer x:Name="PART_ContentHost"
+                                                          Background="Transparent"
+                                                          BorderThickness="0"
+                                                          Focusable="False"
+                                                          HorizontalScrollBarVisibility="Hidden"
+                                                          VerticalScrollBarVisibility="Hidden" />
+                                        </Border>
+                                    </ControlTemplate>
+                                </TextBox.Template>
+                            </TextBox>
+                            <TextBlock x:Name="QuickSearchPlaceholderText"
+                                       Text="输入图片序号"
+                                       Margin="6,0,0,0"
+                                       Foreground="#BCEFF2F5"
+                                       FontSize="15"
+                                       VerticalAlignment="Center"
+                                       IsHitTestVisible="False" />
+                        </Grid>
+
+                        <TextBlock x:Name="QuickSearchHintText"
+                                   Grid.Column="2"
+                                   MaxWidth="180"
+                                   Margin="12,0,14,0"
+                                   Foreground="#D9EFF2F5"
+                                   FontSize="11"
+                                   VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" />
+
+                        <Button x:Name="QuickSearchGoButton"
+                                Grid.Column="3"
+                                Width="36"
+                                Height="36"
+                                Padding="0"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Focusable="False"
+                                Cursor="Hand"
+                                ToolTip="跳转"
+                                Click="QuickSearchGoButton_Click">
+                            <Button.Template>
+                                <ControlTemplate TargetType="{x:Type Button}">
+                                    <Border x:Name="GoButtonChrome"
+                                            Background="Transparent"
+                                            CornerRadius="18">
+                                        <ContentPresenter HorizontalAlignment="Center"
+                                                          VerticalAlignment="Center" />
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="GoButtonChrome"
+                                                    Property="Background"
+                                                    Value="#24FFFFFF" />
+                                        </Trigger>
+                                        <Trigger Property="IsPressed" Value="True">
+                                            <Setter TargetName="GoButtonChrome"
+                                                    Property="Background"
+                                                    Value="#3CFFFFFF" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Button.Template>
+                            <Button.Content>
+                                <TextBlock Text="→"
+                                           Foreground="#EFFFFFFF"
+                                           FontFamily="Segoe UI Variable Display, Microsoft YaHei UI"
+                                           FontSize="22"
+                                           FontWeight="SemiBold"
+                                           Margin="0,-2,0,0" />
+                            </Button.Content>
+                        </Button>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
 
     </Grid>
 </Window>

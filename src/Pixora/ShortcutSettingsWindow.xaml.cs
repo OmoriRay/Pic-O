@@ -33,8 +33,15 @@ public partial class ShortcutSettingsWindow : Window
         SavedFileOpenBehaviorComboBox.SelectedValue = viewerSettings.SavedFileOpenBehavior.ToString();
         ConfirmDeleteToRecycleBinCheckBox.IsChecked = viewerSettings.ConfirmDeleteToRecycleBin;
         OpenLastFolderOnStartupCheckBox.IsChecked = viewerSettings.OpenLastFolderOnStartup;
+        ReuseExistingWindowCheckBox.IsChecked = viewerSettings.ReuseExistingWindow;
+        KeepViewStateWhenNavigatingCheckBox.IsChecked = viewerSettings.KeepViewStateWhenNavigating;
+        WatchFolderChangesCheckBox.IsChecked = viewerSettings.WatchFolderChanges;
         ShowThumbnailSidebarCheckBox.IsChecked = viewerSettings.ShowThumbnailSidebar;
         UseDoubleThumbnailColumnsCheckBox.IsChecked = viewerSettings.UseDoubleThumbnailColumns;
+        QuickSearchModeComboBox.SelectedValue = viewerSettings.QuickSearchMode.ToString();
+        ShowQuickSearchOnStartupCheckBox.IsChecked = viewerSettings.ShowQuickSearchOnStartup;
+        RememberMainWindowPlacementCheckBox.IsChecked = viewerSettings.RememberMainWindowPlacement;
+        StartMainWindowMaximizedCheckBox.IsChecked = viewerSettings.StartMainWindowMaximized;
         ShowDirectoryStatsCheckBox.IsChecked = viewerSettings.ShowDirectoryStats;
         ShowAnimationControlsCheckBox.IsChecked = viewerSettings.ShowAnimationControls;
         ShowOperationNotificationsCheckBox.IsChecked = viewerSettings.ShowOperationNotifications;
@@ -43,6 +50,7 @@ public partial class ShortcutSettingsWindow : Window
         SelectComboBoxValue(DisplayPreviewCacheComboBox, viewerSettings.DisplayPreviewCacheMegabytes, ViewerSettings.DefaultDisplayPreviewCacheMegabytes);
         LowMemoryProtectionCheckBox.IsChecked = viewerSettings.EnableLowMemoryProtection;
         ThumbnailDiskCacheCheckBox.IsChecked = viewerSettings.UseThumbnailDiskCache;
+        IncludePrivatePathsInDiagnosticsCheckBox.IsChecked = viewerSettings.IncludePrivatePathsInDiagnostics;
         SelectComboBoxValue(ThumbnailDiskCacheSizeComboBox, viewerSettings.ThumbnailDiskCacheMegabytes, ViewerSettings.DefaultThumbnailDiskCacheMegabytes);
         RefreshThumbnailDiskCacheInfo();
         AppVersionText.Text = $"{AppInfo.Name} {GetAppVersion()}";
@@ -159,6 +167,65 @@ public partial class ShortcutSettingsWindow : Window
         ShortcutsPage.Visibility = showGeneral ? Visibility.Collapsed : Visibility.Visible;
         StatusText.Visibility = showGeneral ? Visibility.Collapsed : Visibility.Visible;
         ShortcutActionButtonsPanel.Visibility = showGeneral ? Visibility.Collapsed : Visibility.Visible;
+        ApplySettingsSearchFilter();
+    }
+
+    private void SettingsSearchTextBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (SettingsSearchPlaceholderText is null)
+        {
+            return;
+        }
+
+        SettingsSearchPlaceholderText.Visibility = string.IsNullOrEmpty(SettingsSearchTextBox.Text)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        ApplySettingsSearchFilter();
+    }
+
+    private void ApplySettingsSearchFilter()
+    {
+        if (FileBehaviorSettingsSection is null
+            || InterfaceSettingsSection is null
+            || PerformanceSettingsSection is null
+            || DiagnosticsSettingsSection is null
+            || FileAssociationsSettingsSection is null
+            || ShortcutGrid is null)
+        {
+            return;
+        }
+
+        var query = SettingsSearchTextBox?.Text.Trim() ?? string.Empty;
+        SetSettingsSectionVisibility(
+            FileBehaviorSettingsSection,
+            query,
+            "文件 行为 保存 打开 删除 回收站 启动 目录 窗口 复用 缩放 监视 刷新");
+        SetSettingsSectionVisibility(
+            InterfaceSettingsSection,
+            query,
+            "界面 缩略图 单列 双列 搜索 序号 文件名 主窗口 最大化 统计 动图 操作提示 原图");
+        SetSettingsSectionVisibility(
+            PerformanceSettingsSection,
+            query,
+            "性能 缓存 内存 原图 预览 缩略图 磁盘 清理 容量");
+        SetSettingsSectionVisibility(
+            DiagnosticsSettingsSection,
+            query,
+            "诊断 关于 版本 日志 路径 隐私 复制");
+        SetSettingsSectionVisibility(
+            FileAssociationsSettingsSection,
+            query,
+            "文件关联 默认应用 格式 注册 取消关联 高级");
+
+        ApplyShortcutRows();
+    }
+
+    private static void SetSettingsSectionVisibility(FrameworkElement section, string query, string keywords)
+    {
+        section.Visibility = string.IsNullOrWhiteSpace(query)
+            || keywords.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
     }
 
     private void RefreshRows()
@@ -239,7 +306,14 @@ public partial class ShortcutSettingsWindow : Window
 
     private void ApplyShortcutRows(ShortcutAction? selectedAction = null, KeyboardShortcut? selectedShortcut = null)
     {
-        var rows = ArrangeShortcutRowsForDisplay(_shortcutRows, _shortcutGridColumnCount);
+        var query = SettingsSearchTextBox?.Text.Trim() ?? string.Empty;
+        var sourceRows = string.IsNullOrWhiteSpace(query)
+            ? _shortcutRows
+            : _shortcutRows.Where(row =>
+                row.Category.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                || row.ActionName.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                || row.ShortcutText.Contains(query, StringComparison.CurrentCultureIgnoreCase)).ToList();
+        var rows = ArrangeShortcutRowsForDisplay(sourceRows, _shortcutGridColumnCount);
         var displayRows = CreateShortcutDisplayRows(rows, _shortcutGridColumnCount);
         ShortcutGrid.ItemsSource = displayRows;
         ShortcutGrid.SelectedItem = displayRows.FirstOrDefault(row =>
@@ -379,8 +453,15 @@ public partial class ShortcutSettingsWindow : Window
             _viewerSettings.SavedFileOpenBehavior = GetSelectedSavedFileOpenBehavior();
             _viewerSettings.ConfirmDeleteToRecycleBin = ConfirmDeleteToRecycleBinCheckBox.IsChecked == true;
             _viewerSettings.OpenLastFolderOnStartup = OpenLastFolderOnStartupCheckBox.IsChecked == true;
+            _viewerSettings.ReuseExistingWindow = ReuseExistingWindowCheckBox.IsChecked == true;
+            _viewerSettings.KeepViewStateWhenNavigating = KeepViewStateWhenNavigatingCheckBox.IsChecked == true;
+            _viewerSettings.WatchFolderChanges = WatchFolderChangesCheckBox.IsChecked == true;
             _viewerSettings.ShowThumbnailSidebar = ShowThumbnailSidebarCheckBox.IsChecked == true;
             _viewerSettings.UseDoubleThumbnailColumns = UseDoubleThumbnailColumnsCheckBox.IsChecked == true;
+            _viewerSettings.QuickSearchMode = GetSelectedQuickSearchMode();
+            _viewerSettings.ShowQuickSearchOnStartup = ShowQuickSearchOnStartupCheckBox.IsChecked == true;
+            _viewerSettings.RememberMainWindowPlacement = RememberMainWindowPlacementCheckBox.IsChecked == true;
+            _viewerSettings.StartMainWindowMaximized = StartMainWindowMaximizedCheckBox.IsChecked == true;
             _viewerSettings.ShowDirectoryStats = ShowDirectoryStatsCheckBox.IsChecked == true;
             _viewerSettings.ShowAnimationControls = ShowAnimationControlsCheckBox.IsChecked == true;
             _viewerSettings.ShowOperationNotifications = ShowOperationNotificationsCheckBox.IsChecked == true;
@@ -389,6 +470,7 @@ public partial class ShortcutSettingsWindow : Window
             _viewerSettings.DisplayPreviewCacheMegabytes = GetSelectedMegabytes(DisplayPreviewCacheComboBox, ViewerSettings.DefaultDisplayPreviewCacheMegabytes);
             _viewerSettings.EnableLowMemoryProtection = LowMemoryProtectionCheckBox.IsChecked == true;
             _viewerSettings.UseThumbnailDiskCache = ThumbnailDiskCacheCheckBox.IsChecked == true;
+            _viewerSettings.IncludePrivatePathsInDiagnostics = IncludePrivatePathsInDiagnosticsCheckBox.IsChecked == true;
             _viewerSettings.ThumbnailDiskCacheMegabytes = GetSelectedMegabytes(
                 ThumbnailDiskCacheSizeComboBox,
                 ViewerSettings.DefaultThumbnailDiskCacheMegabytes);
@@ -457,6 +539,17 @@ public partial class ShortcutSettingsWindow : Window
             ErrorLog.WriteException("OpenErrorLogFolder", "打开错误日志位置失败。", ex);
             MessageBox.Show(this, $"打开错误日志位置失败：\n{ex.Message}", AppInfo.Name, MessageBoxButton.OK, MessageBoxImage.Warning);
         }
+    }
+
+    private void CopyDiagnosticsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (Owner is MainWindow mainWindow)
+        {
+            mainWindow.CopyDiagnosticsInfo();
+            return;
+        }
+
+        MessageBox.Show(this, "请从主窗口打开设置后再复制诊断信息。", AppInfo.Name, MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void RegisterFileAssociationsButton_Click(object sender, RoutedEventArgs e)
@@ -733,6 +826,14 @@ public partial class ShortcutSettingsWindow : Window
             : SavedFileOpenBehavior.None;
     }
 
+    private QuickSearchMode GetSelectedQuickSearchMode()
+    {
+        var selectedValue = QuickSearchModeComboBox.SelectedValue as string;
+        return Enum.TryParse<QuickSearchMode>(selectedValue, out var mode)
+            ? mode
+            : QuickSearchMode.Index;
+    }
+
     private static string GetAppVersion()
     {
         var assembly = typeof(ShortcutSettingsWindow).Assembly;
@@ -772,6 +873,7 @@ public partial class ShortcutSettingsWindow : Window
             ShortcutAction.ToggleInfo => 36,
             ShortcutAction.ToggleThumbnailSidebar => 37,
             ShortcutAction.ToggleThumbnailColumns => 38,
+            ShortcutAction.ShowQuickSearch => 39,
             ShortcutAction.OpenImage => 50,
             ShortcutAction.OpenFolder => 51,
             ShortcutAction.OpenContainingFolder => 52,

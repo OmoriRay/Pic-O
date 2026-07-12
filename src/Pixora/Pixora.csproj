@@ -10,10 +10,10 @@
     <RootNamespace>Pixora</RootNamespace>
     <Product>Pixora</Product>
     <Description>Pixora 图片查看器</Description>
-    <Version>0.3.4</Version>
-    <AssemblyVersion>0.3.4.0</AssemblyVersion>
-    <FileVersion>0.3.4.0</FileVersion>
-    <InformationalVersion>0.3.4</InformationalVersion>
+    <Version>0.3.5</Version>
+    <AssemblyVersion>0.3.5.0</AssemblyVersion>
+    <FileVersion>0.3.5.0</FileVersion>
+    <InformationalVersion>0.3.5</InformationalVersion>
     <ApplicationIcon>Assets\PixoraApp.ico</ApplicationIcon>
   </PropertyGroup>
 
@@ -27,6 +27,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Resource Include="Assets\PixoraIcon.png" />
     <Content Include="Assets\PixoraImage.ico"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />

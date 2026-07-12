@@ -58,9 +58,14 @@ internal static class Program
         AssertMediaCatalogLoaderCancellation(imageFolder);
         AssertVideoMediaSupport(root);
         AssertCatalogSortModes(root);
+        AssertCatalogUpdateHelpers(imageFolder);
         AssertFavoriteStore(root);
         AssertShortcutSettings();
+        AssertQuickSearchMatcher();
         AssertViewerSettings(root);
+        AssertMainWindowInputMethodDisabled(root);
+        AssertMainWindowExperienceControls(root);
+        AssertMainWindowInitializes();
         AssertSettingsWindowInitializes();
         AssertMemoryCacheCoordinator();
         AssertThumbnailDiskCache(root);
@@ -595,6 +600,7 @@ internal static class Program
         Assert(settings.Matches(ShortcutAction.SaveCrop, new KeyboardShortcut(Key.Enter, ModifierKeys.None)), "Enter should save crop while cropping.");
         Assert(settings.Matches(ShortcutAction.ToggleThumbnailSidebar, new KeyboardShortcut(Key.B, ModifierKeys.Control)), "Ctrl+B should toggle thumbnail sidebar.");
         Assert(settings.Matches(ShortcutAction.ToggleThumbnailColumns, new KeyboardShortcut(Key.B, ModifierKeys.Control | ModifierKeys.Shift)), "Ctrl+Shift+B should toggle thumbnail columns.");
+        Assert(settings.Matches(ShortcutAction.ShowQuickSearch, new KeyboardShortcut(Key.K, ModifierKeys.Control)), "Ctrl+K should open quick search.");
         Assert(settings.FindConflict(ShortcutAction.ToggleFullScreen, new KeyboardShortcut(Key.Enter, ModifierKeys.None)) is null, "Viewer and crop shortcuts should be allowed to share Enter.");
 
         var custom = settings.Clone();
@@ -618,6 +624,26 @@ internal static class Program
         Assert(ShortcutSettings.ActionInfos.All(info => custom.GetShortcuts(info.Action).Count == 0), "ClearAll should remove every shortcut binding.");
     }
 
+    private static void AssertQuickSearchMatcher()
+    {
+        Assert(QuickSearchMatcher.TryResolveOneBasedIndex("2", 3, out var index) && index == 1, "Quick search should resolve one-based positions.");
+        Assert(!QuickSearchMatcher.TryResolveOneBasedIndex("0", 3, out _), "Quick search should reject positions below the catalog range.");
+        Assert(!QuickSearchMatcher.TryResolveOneBasedIndex("4", 3, out _), "Quick search should reject positions above the catalog range.");
+
+        var paths = new[]
+        {
+            Path.Combine("sample", "春天-001.jpg"),
+            Path.Combine("sample", "Summer-002.PNG"),
+        };
+        Assert(QuickSearchMatcher.FindFileNameMatch(paths, "春天") == 0, "Quick search should match Chinese file names.");
+        Assert(QuickSearchMatcher.FindFileNameMatch(paths, "summer") == 1, "Quick search should match file names without case sensitivity.");
+        Assert(QuickSearchMatcher.FindFileNameMatch(paths, "missing") == -1, "Quick search should report missing file-name matches.");
+        Assert(QuickSearchMatcher.MatchesFileName(paths[1], "002"), "Quick search should expose reusable file-name matching for live thumbnail filtering.");
+        Assert(
+            QuickSearchMatcher.CompactFileName("abcdefghijklmno123456789.png", 8, 8) == "abcdefgh…6789.png",
+            "Quick search should preserve both the beginning and ending of long file names.");
+    }
+
     private static void AssertViewerSettings(string root)
     {
         var outputFolder = Path.Combine(root, "test-output");
@@ -628,30 +654,53 @@ internal static class Program
         {
             ShowThumbnailSidebar = false,
             UseDoubleThumbnailColumns = false,
+            QuickSearchMode = QuickSearchMode.FileName,
+            ShowQuickSearchOnStartup = true,
             SavedFileOpenBehavior = SavedFileOpenBehavior.NewWindow,
             ConfirmDeleteToRecycleBin = false,
             SortMode = ImageSortMode.FileSizeLargest,
             LastOpenedFolder = outputFolder,
             OpenLastFolderOnStartup = true,
+            RememberMainWindowPlacement = true,
+            StartMainWindowMaximized = true,
+            ReuseExistingWindow = false,
+            KeepViewStateWhenNavigating = true,
+            WatchFolderChanges = false,
+            MainWindowWidth = 1234,
+            MainWindowHeight = 777,
+            MainWindowLeft = 33,
+            MainWindowTop = 44,
+            MainWindowMaximized = true,
             ShowDirectoryStats = true,
             ShowAnimationControls = false,
             ShowOperationNotifications = false,
             ThumbnailDiskCacheMegabytes = 1024,
+            IncludePrivatePathsInDiagnostics = true,
         };
 
         settings.Save(settingsPath);
         var loaded = ViewerSettings.Load(settingsPath);
         Assert(!loaded.ShowThumbnailSidebar, "Viewer settings should persist hidden thumbnail sidebar state.");
         Assert(!loaded.UseDoubleThumbnailColumns, "Viewer settings should persist thumbnail column preference.");
+        Assert(loaded.QuickSearchMode == QuickSearchMode.FileName, "Viewer settings should persist quick-search mode.");
+        Assert(loaded.ShowQuickSearchOnStartup, "Viewer settings should persist startup quick-search visibility.");
         Assert(loaded.SavedFileOpenBehavior == SavedFileOpenBehavior.NewWindow, "Viewer settings should persist saved file open behavior.");
         Assert(!loaded.ConfirmDeleteToRecycleBin, "Viewer settings should persist delete confirmation preference.");
         Assert(loaded.SortMode == ImageSortMode.FileSizeLargest, "Viewer settings should persist image sort mode.");
         Assert(string.Equals(loaded.LastOpenedFolder, outputFolder, StringComparison.OrdinalIgnoreCase), "Viewer settings should persist the last opened folder.");
         Assert(loaded.OpenLastFolderOnStartup, "Viewer settings should persist last-folder startup behavior.");
+        Assert(loaded.RememberMainWindowPlacement, "Viewer settings should persist main-window placement behavior.");
+        Assert(loaded.StartMainWindowMaximized, "Viewer settings should persist forced maximized startup behavior.");
+        Assert(!loaded.ReuseExistingWindow, "Viewer settings should persist single-instance behavior.");
+        Assert(loaded.KeepViewStateWhenNavigating, "Viewer settings should persist navigation view behavior.");
+        Assert(!loaded.WatchFolderChanges, "Viewer settings should persist folder watching behavior.");
+        Assert(loaded.MainWindowWidth == 1234 && loaded.MainWindowHeight == 777, "Viewer settings should persist main-window dimensions.");
+        Assert(loaded.MainWindowLeft == 33 && loaded.MainWindowTop == 44 && loaded.MainWindowMaximized, "Viewer settings should persist main-window placement and state.");
         Assert(loaded.ShowDirectoryStats, "Viewer settings should persist directory stats visibility.");
         Assert(!loaded.ShowAnimationControls, "Viewer settings should persist animation control visibility.");
         Assert(!loaded.ShowOperationNotifications, "Viewer settings should persist operation notification visibility.");
         Assert(loaded.ThumbnailDiskCacheMegabytes == 1024, "Viewer settings should persist thumbnail disk cache capacity.");
+        Assert(loaded.IncludePrivatePathsInDiagnostics, "Viewer settings should persist diagnostic privacy preference.");
         Assert(FileAssociationService.SupportedExtensions.Contains(".gif"), "File association extensions should include GIF.");
         Assert(FileAssociationService.SupportedExtensions.All(extension => ImageCatalog.IsSupportedStillImagePath("sample" + extension)), "File association extensions should be supported image extensions.");
     }
@@ -675,18 +724,113 @@ internal static class Program
         var viewerSettings = new ViewerSettings
         {
             ThumbnailDiskCacheMegabytes = 1024,
+            QuickSearchMode = QuickSearchMode.FileName,
+            ShowQuickSearchOnStartup = true,
         };
         var window = new ShortcutSettingsWindow(ShortcutSettings.Load(), viewerSettings);
         var comboBox = window.FindName("ThumbnailDiskCacheSizeComboBox") as ComboBox;
         var cachePathText = window.FindName("ThumbnailDiskCachePathText") as TextBlock;
         var generalPage = window.FindName("GeneralPage") as ScrollViewer;
+        var quickSearchMode = window.FindName("QuickSearchModeComboBox") as ComboBox;
+        var showQuickSearchOnStartup = window.FindName("ShowQuickSearchOnStartupCheckBox") as CheckBox;
+        var settingsSearch = window.FindName("SettingsSearchTextBox") as TextBox;
+        var interfaceSection = window.FindName("InterfaceSettingsSection") as FrameworkElement;
+        var performanceSection = window.FindName("PerformanceSettingsSection") as FrameworkElement;
 
         Assert(comboBox is not null, "Settings window should initialize the thumbnail disk cache capacity selector.");
         Assert(comboBox!.SelectedValue?.ToString() == "1024", "Settings window should select the persisted thumbnail disk cache capacity.");
         Assert(cachePathText?.Text.Contains("当前占用", StringComparison.Ordinal) == true, "Settings window should show thumbnail disk cache usage.");
         Assert(generalPage?.ClipToBounds == true, "Settings page should clip scrolling content inside its viewport.");
+        Assert(quickSearchMode?.SelectedValue?.ToString() == "FileName", "Settings window should select the persisted quick-search mode.");
+        Assert(showQuickSearchOnStartup?.IsChecked == true, "Settings window should select persisted startup quick-search visibility.");
+        Assert(settingsSearch is not null, "Settings window should expose an always-visible search input.");
+        settingsSearch!.Text = "缓存";
+        Assert(performanceSection?.Visibility == Visibility.Visible, "Settings search should keep matching performance and cache settings visible.");
+        Assert(interfaceSection?.Visibility == Visibility.Collapsed, "Settings search should hide unrelated interface settings.");
+        settingsSearch.Clear();
+        Assert(interfaceSection?.Visibility == Visibility.Visible, "Clearing settings search should restore all settings sections.");
         Assert(TextOptions.GetTextRenderingMode(generalPage) == TextRenderingMode.Grayscale, "Settings page should use stable grayscale text rendering while scrolling.");
         Assert(TextOptions.GetTextHintingMode(generalPage) == TextHintingMode.Animated, "Settings page should use animated text hinting while scrolling.");
+    }
+
+    private static void AssertMainWindowInputMethodDisabled(string root)
+    {
+        var xamlPath = Path.Combine(root, "src", "Pixora", "MainWindow.xaml");
+        var xaml = File.ReadAllText(xamlPath);
+        Assert(
+            xaml.Contains("InputMethod.IsInputMethodEnabled=\"False\"", StringComparison.Ordinal),
+            "Main window should disable IME composition so letter shortcuts are not treated as Chinese text input.");
+    }
+
+    private static void AssertMainWindowExperienceControls(string root)
+    {
+        var xamlPath = Path.Combine(root, "src", "Pixora", "MainWindow.xaml");
+        var xaml = File.ReadAllText(xamlPath);
+        var codePath = Path.Combine(root, "src", "Pixora", "MainWindow.xaml.cs");
+        var code = File.ReadAllText(codePath);
+        Assert(xaml.Contains("x:Name=\"CancelFolderLoadButton\"", StringComparison.Ordinal), "Main window should expose scan cancellation.");
+        Assert(xaml.Contains("x:Name=\"CatalogScanPanel\"", StringComparison.Ordinal), "Main window should expose background catalog progress.");
+        Assert(xaml.Contains("x:Name=\"QuickSearchOverlay\"", StringComparison.Ordinal), "Main window should expose the hidden quick-search overlay.");
+        Assert(xaml.Contains("x:Name=\"QuickSearchTextBox\"", StringComparison.Ordinal), "Quick search should expose a dedicated text input.");
+        Assert(xaml.Contains("Margin=\"4,0,0,0\"", StringComparison.Ordinal), "Quick-search input should keep comfortable spacing from the Pixora icon.");
+        Assert(xaml.Contains("Margin=\"6,0,0,0\"", StringComparison.Ordinal), "Quick-search placeholder should not touch the empty text caret.");
+        Assert(xaml.Contains("x:Name=\"PART_ContentHost\"", StringComparison.Ordinal), "Quick search should use a transparent dedicated text-box template instead of the global dark input chrome.");
+        Assert(xaml.Contains("Assets/PixoraIcon.png", StringComparison.Ordinal), "Quick search should use the Pixora icon instead of a text mode marker.");
+        Assert(xaml.Contains("<EventTrigger RoutedEvent=\"MouseEnter\">", StringComparison.Ordinal), "Quick search should darken smoothly when hovered.");
+        Assert(xaml.Contains("x:Name=\"QuickSearchBackdropBrush\"", StringComparison.Ordinal), "Quick search should sample the live viewer surface for its backdrop.");
+        Assert(xaml.Contains("<BlurEffect Radius=\"18\"", StringComparison.Ordinal), "Quick search should blur its sampled backdrop instead of using a flat gray fill.");
+        Assert(xaml.Contains("x:Name=\"QuickSearchModeButton\"", StringComparison.Ordinal), "Quick search should let the Pixora icon switch search modes.");
+        Assert(!xaml.Contains("Text=\"&#xE70D;\"", StringComparison.Ordinal), "Quick-search mode icon should not show a separate drop-down arrow.");
+        Assert(!xaml.Contains("x:Name=\"ModeButtonChrome\"", StringComparison.Ordinal), "Quick-search mode icon should blend into the glass bar without a separate gray selection box.");
+        Assert(xaml.Contains("Click=\"QuickSearchGoButton_Click\"", StringComparison.Ordinal), "Quick search should expose a clickable go button.");
+        Assert(xaml.Contains("Text=\"→\"", StringComparison.Ordinal), "Quick search should use a forward arrow for explicit navigation.");
+        Assert(xaml.Contains("InputMethod.IsInputMethodEnabled=\"True\"", StringComparison.Ordinal), "Quick search should locally enable IME for Chinese file-name input.");
+        Assert(xaml.Contains("Grid.ColumnSpan=\"2\"", StringComparison.Ordinal), "Quick search should float across the main window instead of living inside the thumbnail sidebar.");
+        Assert(code.Contains("ShouldShowQuickSearchThumbnailResults", StringComparison.Ordinal), "Quick search should filter thumbnail results only when the sidebar is visible.");
+        Assert(code.Contains("_thumbnailItemsNeedRefresh = true;", StringComparison.Ordinal), "Hidden thumbnail sidebar should defer creating thumbnail item models until it is shown again.");
+        Assert(code.Contains("ShowQuickSearchOnStartupIfNeeded", StringComparison.Ordinal), "Main window should restore persisted quick-search visibility after startup loading.");
+        Assert(code.Contains("private void ToggleQuickSearch()", StringComparison.Ordinal), "Quick-search shortcut should toggle an already visible overlay instead of appearing unresponsive.");
+        Assert(code.Split("ToggleQuickSearch();", StringSplitOptions.None).Length >= 3, "Quick-search shortcut should use the same toggle path whether the overlay is visible or hidden.");
+        Assert(
+            code.IndexOf("Matches(ShortcutAction.ShowQuickSearch", StringComparison.Ordinal)
+            < code.IndexOf("if (_isCropMode)", StringComparison.Ordinal),
+            "Quick-search shortcut should be dispatched before viewer and crop actions can intercept it.");
+        Assert(code.Contains("_shortcutSettings.ReplaceWith(ShortcutSettings.Load())", StringComparison.Ordinal), "Main window should reload saved shortcut settings immediately after the settings dialog closes.");
+        Assert(xaml.Contains("<UniformGrid Rows=\"1\"", StringComparison.Ordinal), "Thumbnail rows should distribute cells evenly across the fixed sidebar width.");
+        Assert(xaml.Contains("Columns=\"{Binding DataContext.ThumbnailColumnCount", StringComparison.Ordinal), "Thumbnail rows should follow the active single or double column count.");
+        Assert(xaml.Contains("Width=\"{Binding DataContext.ThumbnailItemWidth", StringComparison.Ordinal), "Thumbnail cells should retain the compact fixed size used by the stable layout.");
+        Assert(xaml.Contains("Padding=\"{Binding DataContext.ThumbnailItemPadding", StringComparison.Ordinal), "Thumbnail cell padding should preserve image size without clipping the selection border.");
+        Assert(xaml.Contains("Margin=\"{Binding DataContext.ThumbnailItemMargin", StringComparison.Ordinal), "Single-column thumbnail cells should avoid horizontal margins that clip the selection border.");
+        Assert(xaml.Contains("HorizontalAlignment=\"Center\"", StringComparison.Ordinal), "Fixed thumbnail cells should remain centered inside evenly distributed columns.");
+        Assert(xaml.Contains("Padding=\"8,4,4,4\"", StringComparison.Ordinal), "Thumbnail list should balance its left inset against the scrollbar gutter.");
+        Assert(xaml.Contains("Margin=\"0,0,1.5,0\"", StringComparison.Ordinal), "Thumbnail rows should keep balanced outer spacing in double-column mode.");
+    }
+
+    private static void AssertMainWindowInitializes()
+    {
+        var window = new MainWindow();
+        var scanPanel = window.FindName("CatalogScanPanel") as FrameworkElement;
+        var quickSearchOverlay = window.FindName("QuickSearchOverlay") as FrameworkElement;
+
+        Assert(scanPanel is not null && scanPanel.Visibility == Visibility.Collapsed, "Background scan progress should start hidden.");
+        Assert(quickSearchOverlay is not null && quickSearchOverlay.Visibility == Visibility.Collapsed, "Quick search should stay hidden until its shortcut is pressed.");
+    }
+
+    private static void AssertCatalogUpdateHelpers(string imageFolder)
+    {
+        var reports = new List<int>();
+        var catalog = new ImageCatalog();
+        catalog.LoadFromFolder(imageFolder, CancellationToken.None, new ImmediateProgress<int>(reports.Add));
+        Assert(reports.Count > 0 && reports[^1] == catalog.Count, "Catalog scan progress should report the final supported-media count.");
+
+        var tenIndex = Array.FindIndex(
+            catalog.Paths.ToArray(),
+            path => string.Equals(Path.GetFileName(path), "10.png", StringComparison.OrdinalIgnoreCase));
+        Assert(tenIndex >= 0, "Catalog search should find a matching file name.");
+        Assert(catalog.MoveToIndex(tenIndex) && Path.GetFileName(catalog.CurrentPath) == "10.png", "Catalog should move to a zero-based index.");
+        var removedPath = catalog.CurrentPath!;
+        Assert(catalog.RemovePath(removedPath), "Catalog should remove an externally deleted path.");
+        Assert(!catalog.Paths.Contains(removedPath, StringComparer.OrdinalIgnoreCase), "Removed catalog path should no longer be present.");
     }
 
     private static void AssertThumbnailDiskCache(string root)
