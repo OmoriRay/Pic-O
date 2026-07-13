@@ -1,5 +1,4 @@
 using System.IO;
-using System.Text.Json;
 
 namespace Pixora.Services;
 
@@ -32,6 +31,10 @@ public sealed class ViewerSettings
 
     public bool ShowQuickSearchOnStartup { get; set; }
 
+    public double QuickSearchOffsetX { get; set; }
+
+    public double QuickSearchOffsetY { get; set; }
+
     public SavedFileOpenBehavior SavedFileOpenBehavior { get; set; } = SavedFileOpenBehavior.None;
 
     public bool ConfirmDeleteToRecycleBin { get; set; } = true;
@@ -61,8 +64,6 @@ public sealed class ViewerSettings
     public double? MainWindowTop { get; set; }
 
     public bool MainWindowMaximized { get; set; }
-
-    public bool ShowDirectoryStats { get; set; }
 
     public bool ShowAnimationControls { get; set; } = true;
 
@@ -99,15 +100,9 @@ public sealed class ViewerSettings
 
     public static ViewerSettings Load(string path)
     {
-        if (!File.Exists(path))
-        {
-            return new ViewerSettings();
-        }
-
         try
         {
-            var json = File.ReadAllText(path);
-            var settings = JsonSerializer.Deserialize<ViewerSettings>(json) ?? new ViewerSettings();
+            var settings = AtomicJsonFile.Load<ViewerSettings>(path) ?? new ViewerSettings();
             settings.Normalize();
             return settings;
         }
@@ -125,14 +120,7 @@ public sealed class ViewerSettings
     public void Save(string path)
     {
         Normalize();
-        var folder = Path.GetDirectoryName(path);
-        if (!string.IsNullOrWhiteSpace(folder))
-        {
-            Directory.CreateDirectory(folder);
-        }
-
-        var json = JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(path, json);
+        AtomicJsonFile.Save(path, this);
     }
 
     private void Normalize()
@@ -142,8 +130,18 @@ public sealed class ViewerSettings
             QuickSearchMode = global::Pixora.Services.QuickSearchMode.Index;
         }
 
+        QuickSearchOffsetX = NormalizeOffset(QuickSearchOffsetX);
+        QuickSearchOffsetY = NormalizeOffset(QuickSearchOffsetY);
+
         MainWindowWidth = NormalizeWindowDimension(MainWindowWidth, 640, 10_000);
         MainWindowHeight = NormalizeWindowDimension(MainWindowHeight, 420, 10_000);
+    }
+
+    private static double NormalizeOffset(double value)
+    {
+        return double.IsFinite(value)
+            ? Math.Clamp(value, -10_000, 10_000)
+            : 0;
     }
 
     private static double NormalizeWindowDimension(double value, double minimum, double maximum)

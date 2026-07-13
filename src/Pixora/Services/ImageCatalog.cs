@@ -2,6 +2,18 @@ using System.IO;
 
 namespace Pixora.Services;
 
+public sealed record ImageCatalogMutationResult(
+    int AddedCount,
+    int RemovedCount,
+    int UpdatedCount,
+    string? PreviousCurrentPath,
+    string? CurrentPath)
+{
+    public bool Changed => AddedCount > 0 || RemovedCount > 0 || UpdatedCount > 0;
+
+    public bool CurrentPathChanged => !string.Equals(PreviousCurrentPath, CurrentPath, StringComparison.OrdinalIgnoreCase);
+}
+
 public sealed class ImageCatalog
 {
     private readonly WindowsLogicalStringComparer _windowsLogicalStringComparer = new();
@@ -301,6 +313,76 @@ public sealed class ImageCatalog
         return true;
     }
 
+    public ImageCatalogMutationResult ApplyPathChanges(
+        IEnumerable<string> removedPaths,
+        IEnumerable<string> addedOrUpdatedPaths,
+        string? preferredCurrentPath = null)
+    {
+        ArgumentNullException.ThrowIfNull(removedPaths);
+        ArgumentNullException.ThrowIfNull(addedOrUpdatedPaths);
+
+        var previousCurrentPath = CurrentPath;
+        var previousIndex = Index;
+        var removed = NormalizePathSet(removedPaths);
+        var removedCount = _files.RemoveAll(path => removed.Contains(path));
+        var existing = new HashSet<string>(_files, StringComparer.OrdinalIgnoreCase);
+        var addedCount = 0;
+        var updatedCount = 0;
+
+        foreach (var path in addedOrUpdatedPaths)
+        {
+            if (!TryNormalizeExistingMediaPath(path, out var fullPath))
+            {
+                continue;
+            }
+
+            if (existing.Add(fullPath))
+            {
+                _files.Add(fullPath);
+                addedCount++;
+            }
+            else
+            {
+                updatedCount++;
+            }
+        }
+
+        if (addedCount > 0
+            || removedCount > 0
+            || (updatedCount > 0 && SortMode is ImageSortMode.LastWriteTimeNewest
+                or ImageSortMode.LastWriteTimeOldest
+                or ImageSortMode.FileSizeLargest
+                or ImageSortMode.FileSizeSmallest))
+        {
+            _files = SortPaths(_files);
+        }
+
+        if (_files.Count == 0)
+        {
+            Index = -1;
+        }
+        else if (TryFindPath(preferredCurrentPath, out var preferredIndex))
+        {
+            Index = preferredIndex;
+        }
+        else if (TryFindPath(previousCurrentPath, out var currentIndex))
+        {
+            Index = currentIndex;
+        }
+        else
+        {
+            Index = Math.Clamp(previousIndex, 0, _files.Count - 1);
+        }
+
+        IsSingleFileCatalog = false;
+        return new ImageCatalogMutationResult(
+            addedCount,
+            removedCount,
+            updatedCount,
+            previousCurrentPath,
+            CurrentPath);
+    }
+
     public IReadOnlyList<string> GetNeighborPaths(int radius)
     {
         if (_files.Count <= 1 || Index < 0 || Index >= _files.Count)
@@ -344,6 +426,69 @@ public sealed class ImageCatalog
     private static string GetSortName(string path)
     {
         return Path.GetFileName(path) ?? path;
+    }
+
+    private bool TryFindPath(string? path, out int index)
+    {
+        index = -1;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        string fullPath;
+        try
+        {
+            fullPath = Path.GetFullPath(path);
+        }
+        catch
+        {
+            return false;
+        }
+
+        index = _files.FindIndex(item => string.Equals(item, fullPath, StringComparison.OrdinalIgnoreCase));
+        return index >= 0;
+    }
+
+    private static HashSet<string> NormalizePathSet(IEnumerable<string> paths)
+    {
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in paths)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                continue;
+            }
+
+            try
+            {
+                result.Add(Path.GetFullPath(path));
+            }
+            catch
+            {
+            }
+        }
+
+        return result;
+    }
+
+    private static bool TryNormalizeExistingMediaPath(string path, out string fullPath)
+    {
+        fullPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        try
+        {
+            fullPath = Path.GetFullPath(path);
+            return File.Exists(fullPath) && IsSupportedMediaPath(fullPath);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static int WrapIndex(int index, int count)

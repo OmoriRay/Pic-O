@@ -118,16 +118,33 @@ public sealed class ThumbnailDiskCache
         }
     }
 
-    public ThumbnailDiskCacheStatistics GetStatistics()
+    public Task<ThumbnailDiskCacheStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default)
     {
-        var files = GetCacheFiles();
-        return new ThumbnailDiskCacheStatistics(files.Count, files.Sum(GetFileLength));
+        return Task.Run(() => GetStatistics(cancellationToken), cancellationToken);
     }
 
-    public ThumbnailDiskCacheCleanupResult TrimToBytes(long maxBytes)
+    public ThumbnailDiskCacheStatistics GetStatistics(CancellationToken cancellationToken = default)
+    {
+        var files = GetCacheFiles(cancellationToken);
+        long totalBytes = 0;
+        foreach (var file in files)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            totalBytes += GetFileLength(file);
+        }
+
+        return new ThumbnailDiskCacheStatistics(files.Count, totalBytes);
+    }
+
+    public Task<ThumbnailDiskCacheCleanupResult> TrimToBytesAsync(long maxBytes, CancellationToken cancellationToken = default)
+    {
+        return Task.Run(() => TrimToBytes(maxBytes, cancellationToken), cancellationToken);
+    }
+
+    public ThumbnailDiskCacheCleanupResult TrimToBytes(long maxBytes, CancellationToken cancellationToken = default)
     {
         var targetBytes = Math.Max(1, maxBytes);
-        var files = GetCacheFiles()
+        var files = GetCacheFiles(cancellationToken)
             .OrderBy(static file => GetLastAccessTimeUtc(file))
             .ThenBy(static file => file.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -137,6 +154,7 @@ public sealed class ThumbnailDiskCache
 
         foreach (var file in files)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (totalBytes <= targetBytes)
             {
                 break;
@@ -158,13 +176,19 @@ public sealed class ThumbnailDiskCache
         return new ThumbnailDiskCacheCleanupResult(removedFileCount, removedBytes, Math.Max(0, totalBytes));
     }
 
-    public ThumbnailDiskCacheCleanupResult Clear()
+    public Task<ThumbnailDiskCacheCleanupResult> ClearAsync(CancellationToken cancellationToken = default)
     {
-        var files = GetCacheFiles();
+        return Task.Run(() => Clear(cancellationToken), cancellationToken);
+    }
+
+    public ThumbnailDiskCacheCleanupResult Clear(CancellationToken cancellationToken = default)
+    {
+        var files = GetCacheFiles(cancellationToken);
         var removedFileCount = 0;
         long removedBytes = 0;
         foreach (var file in files)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 removedBytes += GetFileLength(file);
@@ -193,7 +217,7 @@ public sealed class ThumbnailDiskCache
         return Path.Combine(Folder, $"{hash}.png");
     }
 
-    private List<FileInfo> GetCacheFiles()
+    private List<FileInfo> GetCacheFiles(CancellationToken cancellationToken = default)
     {
         try
         {
@@ -202,10 +226,22 @@ public sealed class ThumbnailDiskCache
                 return [];
             }
 
-            return Directory.EnumerateFiles(Folder, "*.png", SearchOption.TopDirectoryOnly)
-                .Select(static path => new FileInfo(path))
-                .Where(static file => file.Exists)
-                .ToList();
+            var result = new List<FileInfo>();
+            foreach (var path in Directory.EnumerateFiles(Folder, "*.png", SearchOption.TopDirectoryOnly))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var file = new FileInfo(path);
+                if (file.Exists)
+                {
+                    result.Add(file);
+                }
+            }
+
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch
         {

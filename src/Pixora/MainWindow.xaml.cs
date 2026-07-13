@@ -6,12 +6,12 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Globalization;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -39,7 +39,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private const int DisplayPreviewCacheMegabytes = ViewerSettings.DefaultDisplayPreviewCacheMegabytes;
     private const int ThumbnailDecodeWidth = 168;
     private const int ThumbnailDecodeHeight = 104;
-    private const int DirectoryStatsFullScanLimit = 20_000;
     private const int SystemParametersInfoSetDesktopWallpaper = 0x0014;
     private const int SystemParametersInfoUpdateIniFile = 0x01;
     private const int SystemParametersInfoSendChange = 0x02;
@@ -48,8 +47,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private const int DisplayPreviewMinimumWidth = 1280;
     private const int DisplayPreviewMinimumHeight = 720;
     private const int DisplayPreviewMaximumSide = 2560;
-    private const double DirectoryStatsBaseFontSize = 9.5;
-    private const double DirectoryStatsMinFontSize = 6.5;
+    private const double QuickSearchEdgePadding = 8;
     private const uint MonitorDefaultToNearest = 2;
     private static readonly TimeSpan FullScreenTransitionFadeInDuration = TimeSpan.FromMilliseconds(130);
     private static readonly TimeSpan FullScreenTransitionHoldDuration = TimeSpan.FromMilliseconds(85);
@@ -57,13 +55,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static readonly TimeSpan InitialQualityRestoreDelay = TimeSpan.FromMilliseconds(360);
     private static readonly TimeSpan InteractiveQualityRestoreDelay = TimeSpan.FromMilliseconds(140);
     private static readonly TimeSpan IdleFullResolutionLoadDelay = TimeSpan.FromMilliseconds(1200);
-    private static readonly Brush DirectoryStatsNormalBrush = new SolidColorBrush(Color.FromRgb(0xAE, 0xB8, 0xC4));
-    private static readonly Brush DirectoryStatsWarningBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0x5C, 0x5C));
-    private static readonly Brush DirectoryStatsTotalBrush = new SolidColorBrush(Color.FromRgb(0xCF, 0xE3, 0xFF));
-    private static readonly Brush DirectoryStatsImageBrush = new SolidColorBrush(Color.FromRgb(0x7D, 0xD3, 0xFC));
-    private static readonly Brush DirectoryStatsAnimatedBrush = new SolidColorBrush(Color.FromRgb(0xFB, 0xBF, 0x24));
-    private static readonly Brush DirectoryStatsVideoBrush = new SolidColorBrush(Color.FromRgb(0xC4, 0xB5, 0xFD));
-    private static readonly Brush DirectoryStatsSizeBrush = new SolidColorBrush(Color.FromRgb(0x86, 0xEF, 0xAC));
+    private static readonly TimeSpan ThumbnailScrollIdleDelay = TimeSpan.FromMilliseconds(180);
     private static readonly ImageSortMode[] SortModeCycle =
     [
         ImageSortMode.NameNatural,
@@ -94,12 +86,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly FavoriteStore _favorites = FavoriteStore.Load();
     private readonly ThumbnailDiskCache _thumbnailDiskCache = new();
     private readonly ThumbnailImageLoader _thumbnailImageLoader;
+    private readonly QuickSearchIndex _quickSearchIndex = new();
+    private readonly QuickSearchInteractionState _quickSearchInteractionState = new();
+    private readonly FolderChangeMonitor _folderChangeMonitor = new();
     private readonly DispatcherTimer _animationTimer;
     private readonly DispatcherTimer _boundaryToastTimer;
     private readonly DispatcherTimer _qualityRestoreTimer;
     private readonly DispatcherTimer _idleFullResolutionTimer;
-    private readonly DispatcherTimer _folderWatcherDebounceTimer;
     private readonly DispatcherTimer _quickSearchDebounceTimer;
+    private readonly DispatcherTimer _thumbnailScrollIdleTimer;
     private ObservableCollection<ThumbnailRow> _thumbnailRows = [];
     private readonly Dictionary<string, BitmapSource> _thumbnailCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ThumbnailItem> _thumbnailItemByPath = new(StringComparer.OrdinalIgnoreCase);
@@ -112,13 +107,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _thumbnailCts;
+    private CancellationTokenSource? _thumbnailViewportCts;
     private CancellationTokenSource? _preloadCts;
-    private CancellationTokenSource? _directoryStatsCts;
     private CancellationTokenSource? _idleFullResolutionCts;
     private CancellationTokenSource? _catalogCompletionCts;
     private CancellationTokenSource? _folderLoadCts;
     private CancellationTokenSource? _folderWatcherRefreshCts;
-    private FileSystemWatcher? _folderWatcher;
+    private CancellationTokenSource? _quickSearchCts;
     private ScrollViewer? _thumbnailScrollViewer;
     private ImageDocument? _currentDocument;
     private bool _showInfo = true;
@@ -137,21 +132,27 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _isAnimationPaused;
     private bool _isPreviewDisplay;
     private bool _isQuickSearchVisible;
+    private bool _isQuickSearchDragging;
+    private bool _isThumbnailScrollActive;
     private bool _thumbnailRowsNeedRefresh;
     private bool _thumbnailItemsNeedRefresh;
     private QuickSearchMode _activeQuickSearchMode;
     private int _animationFrameIndex;
     private int _thumbnailGeneration;
+    private int _thumbnailViewportGeneration;
     private int _catalogCompletionGeneration;
     private int _folderLoadGeneration;
     private int _scheduledFitGeneration;
     private int _thumbnailVisibleStartIndex;
     private int _thumbnailVisibleEndIndex = -1;
     private int? _quickSearchTargetIndex;
+    private QuickSearchIndexResult? _quickSearchResult;
     private int _rotationDegrees;
     private double _scale = 1.0;
     private Point _dragStartPoint;
     private Point _dragStartOffset;
+    private Point _quickSearchDragStartPoint;
+    private Point _quickSearchDragStartOffset;
     private Point _cropStartPoint;
     private Rect _cropStartRect = Rect.Empty;
     private Rect _cropSelectionRect = Rect.Empty;
@@ -165,7 +166,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private double _restoreTop;
     private double _restoreWidth;
     private double _restoreHeight;
-    private string _directoryStatsPlainText = string.Empty;
     private string _lastInlineErrorMessage = string.Empty;
     private string? _previewDisplayPath;
     private BitmapSource? _previewDisplayBitmap;
@@ -230,6 +230,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _startupPath = startupPath;
         _memoryCacheCoordinator = new MemoryCacheCoordinator(_cache, _displayPreviewCache);
         _thumbnailImageLoader = new ThumbnailImageLoader(_thumbnailDiskCache);
+        _folderChangeMonitor.BatchReady += FolderChangeMonitor_BatchReady;
         _catalog.SortMode = _viewerSettings.SortMode;
         _showThumbnailSidebar = _viewerSettings.ShowThumbnailSidebar;
         _useDoubleThumbnailColumns = _viewerSettings.UseDoubleThumbnailColumns;
@@ -238,7 +239,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ThumbnailList.DataContext = this;
         ThumbnailList.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler(ThumbnailList_ScrollChanged));
         ThumbnailList.Loaded += (_, _) => QueueVisibleThumbnails();
-        DirectoryStatsPanel.SizeChanged += (_, _) => UpdateDirectoryStatsTextFit();
         UpdateThumbnailSidebarVisibility();
 
         _animationTimer = new DispatcherTimer(DispatcherPriority.Render);
@@ -258,16 +258,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Interval = IdleFullResolutionLoadDelay,
         };
         _idleFullResolutionTimer.Tick += IdleFullResolutionTimer_Tick;
-        _folderWatcherDebounceTimer = new DispatcherTimer(DispatcherPriority.Background)
-        {
-            Interval = TimeSpan.FromMilliseconds(700),
-        };
-        _folderWatcherDebounceTimer.Tick += FolderWatcherDebounceTimer_Tick;
         _quickSearchDebounceTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
             Interval = TimeSpan.FromMilliseconds(140),
         };
         _quickSearchDebounceTimer.Tick += QuickSearchDebounceTimer_Tick;
+        _thumbnailScrollIdleTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = ThumbnailScrollIdleDelay,
+        };
+        _thumbnailScrollIdleTimer.Tick += ThumbnailScrollIdleTimer_Tick;
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -314,16 +314,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         StopAnimation();
         _qualityRestoreTimer.Stop();
         _quickSearchDebounceTimer.Stop();
+        _thumbnailScrollIdleTimer.Stop();
+        _quickSearchCts?.Cancel();
+        _quickSearchCts?.Dispose();
+        _quickSearchCts = null;
         _boundaryToastTimer.Stop();
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         _thumbnailCts?.Cancel();
         _thumbnailCts?.Dispose();
-        _directoryStatsCts?.Cancel();
-        _directoryStatsCts = null;
         CancelCatalogCompletion();
         CancelFolderLoad();
         StopFolderWatcher();
+        _folderChangeMonitor.BatchReady -= FolderChangeMonitor_BatchReady;
+        _folderChangeMonitor.Dispose();
         CancelIdleFullResolutionLoad();
         CancelPreload();
     }
@@ -471,7 +475,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             _catalog.LoadFromCatalog(loadedCatalog);
             RefreshThumbnailItems();
-            StartDirectoryStatsUpdate();
             if (_catalog.Count == 0)
             {
                 ClearImage();
@@ -535,7 +538,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         CancelCatalogCompletion();
         _catalog.LoadSingleFile(fullPath);
         RefreshThumbnailItems();
-        StartDirectoryStatsUpdate();
         EnterDefaultFitMode();
         await LoadCurrentAsync();
         if (rememberFolder)
@@ -602,7 +604,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
                 _catalog.LoadFromCatalog(completedCatalog);
                 RefreshThumbnailItems();
-                StartDirectoryStatsUpdate();
                 UpdateInfoPanel();
                 UpdateWindowTitle(_catalog.CurrentPath);
                 UpdateCommands();
@@ -672,19 +673,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         try
         {
-            _folderWatcher = new FileSystemWatcher(folder)
-            {
-                IncludeSubdirectories = false,
-                NotifyFilter = NotifyFilters.FileName
-                    | NotifyFilters.LastWrite
-                    | NotifyFilters.Size
-                    | NotifyFilters.CreationTime,
-                EnableRaisingEvents = true,
-            };
-            _folderWatcher.Created += FolderWatcher_Changed;
-            _folderWatcher.Deleted += FolderWatcher_Changed;
-            _folderWatcher.Changed += FolderWatcher_Changed;
-            _folderWatcher.Renamed += FolderWatcher_Changed;
+            _folderChangeMonitor.Start(folder);
         }
         catch (Exception ex)
         {
@@ -695,55 +684,125 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void StopFolderWatcher()
     {
-        _folderWatcherDebounceTimer.Stop();
         _folderWatcherRefreshCts?.Cancel();
         _folderWatcherRefreshCts?.Dispose();
         _folderWatcherRefreshCts = null;
-
-        if (_folderWatcher is null)
-        {
-            return;
-        }
-
-        try
-        {
-            _folderWatcher.EnableRaisingEvents = false;
-            _folderWatcher.Created -= FolderWatcher_Changed;
-            _folderWatcher.Deleted -= FolderWatcher_Changed;
-            _folderWatcher.Changed -= FolderWatcher_Changed;
-            _folderWatcher.Renamed -= FolderWatcher_Changed;
-            _folderWatcher.Dispose();
-        }
-        catch
-        {
-        }
-
-        _folderWatcher = null;
+        _folderChangeMonitor.Stop();
     }
 
-    private void FolderWatcher_Changed(object sender, FileSystemEventArgs e)
+    private void FolderChangeMonitor_BatchReady(object? sender, FolderChangeBatch batch)
     {
         if (_isClosing)
         {
             return;
         }
 
-        Dispatcher.BeginInvoke(() =>
+        Dispatcher.BeginInvoke(async () =>
         {
             if (_isClosing || !_viewerSettings.WatchFolderChanges)
             {
                 return;
             }
 
-            _folderWatcherDebounceTimer.Stop();
-            _folderWatcherDebounceTimer.Start();
+            try
+            {
+                await ApplyFolderChangeBatchAsync(batch);
+            }
+            catch (Exception ex)
+            {
+                ErrorLog.WriteException("ApplyFolderChangeBatch", "增量更新目录失败，准备回退完整刷新。", ex);
+                await RefreshCatalogFromFolderWatcherAsync();
+            }
         }, DispatcherPriority.Background);
     }
 
-    private async void FolderWatcherDebounceTimer_Tick(object? sender, EventArgs e)
+    private async Task ApplyFolderChangeBatchAsync(FolderChangeBatch batch)
     {
-        _folderWatcherDebounceTimer.Stop();
-        await RefreshCatalogFromFolderWatcherAsync();
+        if (batch.RequiresFullRefresh || batch.Changes.Count > 512)
+        {
+            await RefreshCatalogFromFolderWatcherAsync();
+            return;
+        }
+
+        var folder = _catalog.SourceFolder;
+        if (_isFavoritesView || string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+        {
+            return;
+        }
+
+        var currentPath = _catalog.CurrentPath;
+        var removedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var addedOrUpdatedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var cacheInvalidationPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        string? preferredCurrentPath = null;
+
+        foreach (var change in batch.Changes)
+        {
+            switch (change.Kind)
+            {
+                case FolderChangeKind.Created:
+                    addedOrUpdatedPaths.Add(change.Path);
+                    cacheInvalidationPaths.Add(change.Path);
+                    break;
+                case FolderChangeKind.Deleted:
+                    removedPaths.Add(change.Path);
+                    cacheInvalidationPaths.Add(change.Path);
+                    break;
+                case FolderChangeKind.Changed:
+                    addedOrUpdatedPaths.Add(change.Path);
+                    cacheInvalidationPaths.Add(change.Path);
+                    break;
+                case FolderChangeKind.Renamed:
+                    if (!string.IsNullOrWhiteSpace(change.OldPath))
+                    {
+                        removedPaths.Add(change.OldPath);
+                        cacheInvalidationPaths.Add(change.OldPath);
+                        if (string.Equals(currentPath, change.OldPath, StringComparison.OrdinalIgnoreCase))
+                        {
+                            preferredCurrentPath = change.Path;
+                        }
+                    }
+
+                    addedOrUpdatedPaths.Add(change.Path);
+                    cacheInvalidationPaths.Add(change.Path);
+                    break;
+            }
+        }
+
+        var mutation = _catalog.ApplyPathChanges(removedPaths, addedOrUpdatedPaths, preferredCurrentPath);
+        if (!mutation.Changed)
+        {
+            return;
+        }
+
+        foreach (var path in cacheInvalidationPaths)
+        {
+            RemoveCachedMedia(path);
+        }
+
+        var currentNeedsReload = mutation.CurrentPath is not null
+            && addedOrUpdatedPaths.Contains(mutation.CurrentPath);
+        RefreshThumbnailItems();
+        UpdateInfoPanel();
+        UpdateWindowTitle(_catalog.CurrentPath);
+        UpdateCommands();
+
+        if (_catalog.Count == 0)
+        {
+            ClearImage();
+        }
+        else if (mutation.CurrentPathChanged || currentNeedsReload)
+        {
+            PrepareForNavigation();
+            await LoadCurrentAsync();
+        }
+
+        ShowBoundaryToast((mutation.AddedCount, mutation.RemovedCount, mutation.UpdatedCount) switch
+        {
+            (> 0, 0, 0) => $"目录已更新：新增 {mutation.AddedCount:N0} 项",
+            (0, > 0, 0) => $"目录已更新：减少 {mutation.RemovedCount:N0} 项",
+            _ => "目录内容已更新",
+        });
     }
 
     private async Task RefreshCatalogFromFolderWatcherAsync()
@@ -785,7 +844,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _thumbnailCache.Clear();
             _thumbnailCacheOrder.Clear();
             RefreshThumbnailItems();
-            StartDirectoryStatsUpdate();
             UpdateInfoPanel();
             UpdateWindowTitle(_catalog.CurrentPath);
             UpdateCommands();
@@ -997,7 +1055,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _thumbnailDiskCache.SetMaxMegabytes(NormalizeMegabytes(
             _viewerSettings.ThumbnailDiskCacheMegabytes,
             ViewerSettings.DefaultThumbnailDiskCacheMegabytes));
-        _ = Task.Run(() => _thumbnailDiskCache.TrimToBytes(_thumbnailDiskCache.MaxBytes));
+        _ = _thumbnailDiskCache.TrimToBytesAsync(_thumbnailDiskCache.MaxBytes);
         ApplyLowMemoryProtectionIfNeeded();
     }
 
@@ -1942,27 +2000,25 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void ShowQuickSearch(bool rememberForStartup = true)
     {
-        if (rememberForStartup && !_viewerSettings.ShowQuickSearchOnStartup)
+        if (rememberForStartup)
         {
-            try
-            {
-                _viewerSettings.ShowQuickSearchOnStartup = true;
-                _viewerSettings.Save();
-            }
-            catch (Exception ex)
-            {
-                ErrorLog.WriteException("SaveQuickSearchStartupPreference", "保存快速搜索启动偏好失败。", ex);
-            }
+            SetQuickSearchStartupPreference(true);
         }
 
         _quickSearchDebounceTimer.Stop();
+        CancelQuickSearchQuery();
+        _quickSearchResult = null;
         _quickSearchTargetIndex = null;
         _isQuickSearchVisible = true;
         QuickSearchOverlay.Visibility = Visibility.Visible;
         QuickSearchOverlay.IsHitTestVisible = true;
+        ApplyQuickSearchPosition(new Point(
+            _viewerSettings.QuickSearchOffsetX,
+            _viewerSettings.QuickSearchOffsetY));
         _activeQuickSearchMode = _viewerSettings.QuickSearchMode;
         ApplyQuickSearchModeUi();
         QuickSearchTextBox.Text = string.Empty;
+        SetQuickSearchTextEntryActive(false);
         UpdateQuickSearchResult();
 
         var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
@@ -1993,9 +2049,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         Dispatcher.BeginInvoke(() =>
         {
+            ApplyQuickSearchPosition(new Point(
+                _viewerSettings.QuickSearchOffsetX,
+                _viewerSettings.QuickSearchOffsetY));
             UpdateQuickSearchBackdropViewbox();
-            QuickSearchTextBox.Focus();
-            Keyboard.Focus(QuickSearchTextBox);
+            Focus();
+            Keyboard.Focus(this);
         }, DispatcherPriority.Input);
     }
 
@@ -2003,8 +2062,142 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         if (_isQuickSearchVisible)
         {
+            ApplyQuickSearchPosition(new Point(
+                _viewerSettings.QuickSearchOffsetX,
+                _viewerSettings.QuickSearchOffsetY));
             UpdateQuickSearchBackdropViewbox();
         }
+    }
+
+    private void QuickSearchGlass_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!_isQuickSearchVisible
+            || (Keyboard.Modifiers & ModifierKeys.Control) == 0)
+        {
+            return;
+        }
+
+        _isQuickSearchDragging = true;
+        _quickSearchDragStartPoint = e.GetPosition(Root);
+        _quickSearchDragStartOffset = new Point(
+            QuickSearchPositionTransform.X,
+            QuickSearchPositionTransform.Y);
+        QuickSearchGlass.Cursor = Cursors.SizeAll;
+        QuickSearchGlass.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void QuickSearchGlass_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_isQuickSearchDragging || e.LeftButton != MouseButtonState.Pressed)
+        {
+            return;
+        }
+
+        var currentPoint = e.GetPosition(Root);
+        ApplyQuickSearchPosition(new Point(
+            _quickSearchDragStartOffset.X + currentPoint.X - _quickSearchDragStartPoint.X,
+            _quickSearchDragStartOffset.Y + currentPoint.Y - _quickSearchDragStartPoint.Y));
+        e.Handled = true;
+    }
+
+    private void QuickSearchGlass_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_isQuickSearchDragging)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        FinishQuickSearchDrag(persist: true);
+    }
+
+    private void QuickSearchGlass_LostMouseCapture(object sender, MouseEventArgs e)
+    {
+        if (_isQuickSearchDragging)
+        {
+            FinishQuickSearchDrag(persist: true);
+        }
+    }
+
+    private void FinishQuickSearchDrag(bool persist)
+    {
+        _isQuickSearchDragging = false;
+        QuickSearchGlass.Cursor = null;
+        if (QuickSearchGlass.IsMouseCaptured)
+        {
+            QuickSearchGlass.ReleaseMouseCapture();
+        }
+
+        if (persist)
+        {
+            SaveQuickSearchPosition();
+        }
+    }
+
+    private void ApplyQuickSearchPosition(Point requestedOffset)
+    {
+        var offset = ClampQuickSearchOffset(requestedOffset);
+        QuickSearchPositionTransform.X = offset.X;
+        QuickSearchPositionTransform.Y = offset.Y;
+        _viewerSettings.QuickSearchOffsetX = offset.X;
+        _viewerSettings.QuickSearchOffsetY = offset.Y;
+        UpdateQuickSearchBackdropViewbox();
+    }
+
+    private Point ClampQuickSearchOffset(Point requestedOffset)
+    {
+        var requestedX = double.IsFinite(requestedOffset.X) ? requestedOffset.X : 0;
+        var requestedY = double.IsFinite(requestedOffset.Y) ? requestedOffset.Y : 0;
+        if (Root.ActualWidth <= 0
+            || Root.ActualHeight <= 0
+            || QuickSearchGlass.ActualWidth <= 0
+            || QuickSearchGlass.ActualHeight <= 0)
+        {
+            return new Point(requestedX, requestedY);
+        }
+
+        var defaultLeft = (Root.ActualWidth - QuickSearchGlass.ActualWidth) / 2;
+        var defaultTop = QuickSearchOverlay.Margin.Top;
+        var minimumX = QuickSearchEdgePadding - defaultLeft;
+        var maximumX = Root.ActualWidth
+            - QuickSearchEdgePadding
+            - defaultLeft
+            - QuickSearchGlass.ActualWidth;
+        var minimumY = QuickSearchEdgePadding - defaultTop;
+        var maximumY = Root.ActualHeight
+            - QuickSearchEdgePadding
+            - defaultTop
+            - QuickSearchGlass.ActualHeight;
+
+        return new Point(
+            minimumX <= maximumX ? Math.Clamp(requestedX, minimumX, maximumX) : 0,
+            minimumY <= maximumY ? Math.Clamp(requestedY, minimumY, maximumY) : 0);
+    }
+
+    private void SaveQuickSearchPosition()
+    {
+        try
+        {
+            _viewerSettings.Save();
+        }
+        catch (Exception ex)
+        {
+            ErrorLog.WriteException("SaveQuickSearchPosition", "保存快速搜索位置失败。", ex);
+        }
+    }
+
+    private void ResetPersistedQuickSearchPosition()
+    {
+        if (_viewerSettings.QuickSearchOffsetX == 0
+            && _viewerSettings.QuickSearchOffsetY == 0)
+        {
+            return;
+        }
+
+        _viewerSettings.QuickSearchOffsetX = 0;
+        _viewerSettings.QuickSearchOffsetY = 0;
+        SaveQuickSearchPosition();
     }
 
     private void UpdateQuickSearchBackdropViewbox()
@@ -2025,15 +2218,26 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             QuickSearchGlass.ActualHeight);
     }
 
-    private void HideQuickSearch()
+    private void HideQuickSearch(bool rememberForStartup = true)
     {
         if (!_isQuickSearchVisible)
         {
             return;
         }
 
+        if (rememberForStartup)
+        {
+            SetQuickSearchStartupPreference(false);
+        }
+
         _isQuickSearchVisible = false;
+        SetQuickSearchTextEntryActive(false);
+        if (_isQuickSearchDragging)
+        {
+            FinishQuickSearchDrag(persist: true);
+        }
         _quickSearchDebounceTimer.Stop();
+        CancelQuickSearchQuery();
         ClearQuickSearchThumbnailFilter(rebuildIfVisible: _showThumbnailSidebar);
         QuickSearchOverlay.IsHitTestVisible = false;
         var easing = new CubicEase { EasingMode = EasingMode.EaseIn };
@@ -2083,11 +2287,30 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             });
     }
 
+    private void SetQuickSearchStartupPreference(bool enabled)
+    {
+        if (_viewerSettings.ShowQuickSearchOnStartup == enabled)
+        {
+            return;
+        }
+
+        try
+        {
+            _viewerSettings.ShowQuickSearchOnStartup = enabled;
+            _viewerSettings.Save();
+        }
+        catch (Exception ex)
+        {
+            ErrorLog.WriteException("SaveQuickSearchStartupPreference", "保存快速搜索启动偏好失败。", ex);
+        }
+    }
+
     private void ToggleQuickSearch()
     {
         if (_isQuickSearchVisible)
         {
             HideQuickSearch();
+            ResetPersistedQuickSearchPosition();
             return;
         }
 
@@ -2096,50 +2319,99 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void QuickSearchTextBox_TextChanged(object sender, TextChangedEventArgs e)
     {
-        if (QuickSearchPlaceholderText is null)
+        if (_isQuickSearchVisible && QuickSearchTextBox.IsKeyboardFocusWithin)
         {
-            return;
+            SetQuickSearchTextEntryActive(true);
         }
 
-        QuickSearchPlaceholderText.Visibility = string.IsNullOrEmpty(QuickSearchTextBox.Text)
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-
         _quickSearchDebounceTimer.Stop();
+        CancelQuickSearchQuery();
         if (_activeQuickSearchMode == QuickSearchMode.FileName
             && !string.IsNullOrWhiteSpace(QuickSearchTextBox.Text))
         {
+            SetQuickSearchHint("正在搜索…");
             _quickSearchDebounceTimer.Start();
         }
         else
         {
+            _quickSearchResult = null;
             ClearQuickSearchThumbnailFilter(rebuildIfVisible: _showThumbnailSidebar);
             UpdateQuickSearchResult();
         }
     }
 
-    private void QuickSearchDebounceTimer_Tick(object? sender, EventArgs e)
+    private void QuickSearchTextBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        _quickSearchDebounceTimer.Stop();
-        UpdateQuickSearchResult();
-        ApplyQuickSearchThumbnailFilter();
+        if ((Keyboard.Modifiers & ModifierKeys.Control) == 0)
+        {
+            SetQuickSearchTextEntryActive(true);
+        }
     }
 
-    private void QuickSearchModeButton_Click(object sender, RoutedEventArgs e)
+    private void QuickSearchTextBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        SetQuickSearchTextEntryActive(false);
+    }
+
+    private void Window_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!_isQuickSearchVisible
+            || !_quickSearchInteractionState.IsTextEntryActive
+            || QuickSearchTextBox.IsMouseOver)
+        {
+            return;
+        }
+
+        DeactivateQuickSearchTextEntry();
+    }
+
+    private void DeactivateQuickSearchTextEntry()
+    {
+        SetQuickSearchTextEntryActive(false);
+        Focus();
+        Keyboard.Focus(this);
+    }
+
+    private void SetQuickSearchTextEntryActive(bool active)
+    {
+        _quickSearchInteractionState.SetTextEntryActive(active);
+        QuickSearchTextBox.CaretBrush = active ? Brushes.White : Brushes.Transparent;
+    }
+
+    private async void QuickSearchDebounceTimer_Tick(object? sender, EventArgs e)
+    {
+        _quickSearchDebounceTimer.Stop();
+        await RefreshQuickSearchAsync();
+    }
+
+    private async void QuickSearchModeButton_Click(object sender, RoutedEventArgs e)
     {
         e.Handled = true;
         _activeQuickSearchMode = _activeQuickSearchMode == QuickSearchMode.Index
             ? QuickSearchMode.FileName
             : QuickSearchMode.Index;
+        CancelQuickSearchQuery();
+        _quickSearchResult = null;
         if (_activeQuickSearchMode == QuickSearchMode.Index)
         {
             ClearQuickSearchThumbnailFilter(rebuildIfVisible: _showThumbnailSidebar);
         }
 
         ApplyQuickSearchModeUi();
-        QuickSearchTextBox.Clear();
+        _quickSearchDebounceTimer.Stop();
+        if (_activeQuickSearchMode == QuickSearchMode.FileName
+            && !string.IsNullOrWhiteSpace(QuickSearchTextBox.Text))
+        {
+            await RefreshQuickSearchAsync();
+        }
+        else
+        {
+            UpdateQuickSearchResult();
+        }
+
         QuickSearchTextBox.Focus();
         Keyboard.Focus(QuickSearchTextBox);
+        SetQuickSearchTextEntryActive(true);
     }
 
     private async void QuickSearchGoButton_Click(object sender, RoutedEventArgs e)
@@ -2151,12 +2423,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void ApplyQuickSearchModeUi()
     {
         var searchesByFileName = _activeQuickSearchMode == QuickSearchMode.FileName;
-        QuickSearchPlaceholderText.Text = searchesByFileName
-            ? "输入文件名关键词"
-            : "输入图片序号";
+        QuickSearchModeText.Text = searchesByFileName
+            ? "名称"
+            : "序号";
         QuickSearchModeButton.ToolTip = searchesByFileName
             ? "当前按文件名查找，点击切换为序号"
             : "当前按序号跳转，点击切换为文件名";
+        AutomationProperties.SetName(
+            QuickSearchModeButton,
+            searchesByFileName ? "当前按文件名搜索，点击切换为序号" : "当前按图片序号搜索，点击切换为文件名");
+        AutomationProperties.SetHelpText(
+            QuickSearchTextBox,
+            searchesByFileName ? "输入文件名关键词并按回车跳转" : "输入图片序号并按回车跳转");
     }
 
     private bool ShouldShowQuickSearchThumbnailResults()
@@ -2175,10 +2453,24 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        var query = QuickSearchTextBox.Text.Trim();
-        _thumbnailSearchItems = _thumbnailItems
-            .Where(item => QuickSearchMatcher.MatchesFileName(item.Path, query))
+        var result = _quickSearchResult;
+        if (result is null
+            || !string.Equals(result.Query, QuickSearchTextBox.Text.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var matchingItems = result.MatchingIndices
+            .Where(index => (uint)index < (uint)_thumbnailItems.Count)
+            .Select(index => _thumbnailItems[index])
             .ToList();
+        if (matchingItems.Count == 0)
+        {
+            // 搜索框已经给出“没有找到”的反馈，右侧保留上一次有效内容和滚动位置。
+            return;
+        }
+
+        _thumbnailSearchItems = matchingItems;
         _thumbnailScrollViewer = null;
         _thumbnailVisibleStartIndex = 0;
         _thumbnailVisibleEndIndex = -1;
@@ -2243,11 +2535,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        var matchIndex = QuickSearchMatcher.FindFileNameMatch(_catalog.Paths, query);
+        var result = _quickSearchResult;
+        if (result is null
+            || !string.Equals(result.Query, query, StringComparison.OrdinalIgnoreCase))
+        {
+            SetQuickSearchHint("正在搜索…");
+            return;
+        }
+
+        var matchIndex = result.FirstIndex;
         if (matchIndex >= 0)
         {
             _quickSearchTargetIndex = matchIndex;
-            var fileName = Path.GetFileName(_catalog.Paths[matchIndex]);
+            var fileName = _quickSearchIndex.GetFileName(matchIndex) ?? Path.GetFileName(_catalog.Paths[matchIndex]);
             SetQuickSearchHint(
                 $"第 {matchIndex + 1:N0} 张  ·  {QuickSearchMatcher.CompactFileName(fileName)}",
                 toolTip: fileName);
@@ -2255,6 +2555,66 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         SetQuickSearchHint("没有找到匹配的文件名", isError: true);
+    }
+
+    private async Task RefreshQuickSearchAsync()
+    {
+        var query = QuickSearchTextBox.Text.Trim();
+        if (_activeQuickSearchMode != QuickSearchMode.FileName || query.Length == 0)
+        {
+            CancelQuickSearchQuery();
+            _quickSearchResult = null;
+            ClearQuickSearchThumbnailFilter(rebuildIfVisible: _showThumbnailSidebar);
+            UpdateQuickSearchResult();
+            return;
+        }
+
+        CancelQuickSearchQuery();
+        var cts = new CancellationTokenSource();
+        _quickSearchCts = cts;
+        var previousResult = _quickSearchResult;
+        try
+        {
+            var result = await Task.Run(
+                () => _quickSearchIndex.Search(query, previousResult, cts.Token),
+                cts.Token);
+            if (cts.IsCancellationRequested
+                || !ReferenceEquals(_quickSearchCts, cts)
+                || _activeQuickSearchMode != QuickSearchMode.FileName
+                || !string.Equals(query, QuickSearchTextBox.Text.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            _quickSearchResult = result;
+            UpdateQuickSearchResult();
+            ApplyQuickSearchThumbnailFilter();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(_quickSearchCts, cts))
+            {
+                _quickSearchCts = null;
+            }
+
+            cts.Dispose();
+        }
+    }
+
+    private void CancelQuickSearchQuery()
+    {
+        var cts = _quickSearchCts;
+        _quickSearchCts = null;
+        try
+        {
+            cts?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
     }
 
     private void SetQuickSearchHint(string text, bool isError = false, string? toolTip = null)
@@ -2269,14 +2629,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private async Task ExecuteQuickSearchAsync()
     {
         _quickSearchDebounceTimer.Stop();
-        UpdateQuickSearchResult();
+        if (_activeQuickSearchMode == QuickSearchMode.FileName)
+        {
+            await RefreshQuickSearchAsync();
+        }
+        else
+        {
+            UpdateQuickSearchResult();
+        }
         if (_quickSearchTargetIndex is not { } targetIndex)
         {
             ShakeQuickSearch();
             return;
         }
 
-        HideQuickSearch();
+        HideQuickSearch(rememberForStartup: false);
         if (!_catalog.MoveToIndex(targetIndex))
         {
             return;
@@ -2327,7 +2694,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 return;
             }
 
-            return;
+            if (_quickSearchInteractionState.ShouldTextBoxHandleKey(
+                    e.Key,
+                    KeyboardShortcut.NormalizeModifiers(Keyboard.Modifiers)))
+            {
+                // 用户明确进入文字输入状态后，文本和常用编辑键优先于查看器快捷键。
+                return;
+            }
+
+            // 搜索刚打开且尚未开始输入时，已配置的查看器快捷键仍然优先执行。
         }
 
         if (_shortcutSettings.Matches(ShortcutAction.ShowQuickSearch, shortcut))
@@ -2591,6 +2966,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             ShowShortcutSettingsDialog();
             e.Handled = true;
+            return;
+        }
+
+        if (_isQuickSearchVisible
+            && _quickSearchInteractionState.ShouldSuppressUnboundKey(
+                e.Key,
+                KeyboardShortcut.NormalizeModifiers(Keyboard.Modifiers)))
+        {
+            // 快捷键状态下未绑定的可输入字符保持无动作，不能继续落入仍有逻辑焦点的搜索框。
+            e.Handled = true;
         }
     }
 
@@ -2769,6 +3154,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         if (_isQuickSearchVisible)
         {
+            ApplyQuickSearchPosition(new Point(
+                _viewerSettings.QuickSearchOffsetX,
+                _viewerSettings.QuickSearchOffsetY));
             UpdateQuickSearchBackdropViewbox();
         }
 
@@ -3141,11 +3529,63 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void ThumbnailList_ScrollChanged(object sender, ScrollChangedEventArgs e)
     {
-        if (e.VerticalChange != 0
-            || e.ViewportHeightChange != 0
-            || e.ExtentHeightChange != 0)
+        if (e.VerticalChange != 0)
+        {
+            if (!_isThumbnailScrollActive)
+            {
+                _isThumbnailScrollActive = true;
+                RestartThumbnailViewportLoads();
+            }
+
+            _thumbnailScrollIdleTimer.Stop();
+            _thumbnailScrollIdleTimer.Start();
+            UpdateVisibleThumbnailRange(queueLoads: false, bufferRows: 1);
+            return;
+        }
+
+        if (e.ViewportHeightChange != 0 || e.ExtentHeightChange != 0)
         {
             QueueVisibleThumbnails();
+        }
+    }
+
+    private void ThumbnailScrollIdleTimer_Tick(object? sender, EventArgs e)
+    {
+        _thumbnailScrollIdleTimer.Stop();
+        _isThumbnailScrollActive = false;
+        QueueVisibleThumbnails();
+    }
+
+    private void RestartThumbnailViewportLoads()
+    {
+        _thumbnailViewportCts?.Cancel();
+        _thumbnailViewportCts?.Dispose();
+        _thumbnailViewportCts = null;
+        _thumbnailViewportGeneration++;
+
+        List<ThumbnailItem> interruptedItems;
+        lock (_thumbnailQueueLock)
+        {
+            interruptedItems = _queuedThumbnailPaths
+                .Select(path => _thumbnailItemByPath.TryGetValue(path, out var item) ? item : null)
+                .Where(static item => item is not null)
+                .Cast<ThumbnailItem>()
+                .ToList();
+            _queuedThumbnailPaths.Clear();
+        }
+
+        foreach (var item in interruptedItems)
+        {
+            if (item.Thumbnail is null && !item.HasLoadFailed)
+            {
+                item.IsLoading = false;
+                item.StatusText = string.Empty;
+            }
+        }
+
+        if (_thumbnailCts is not null && !_thumbnailCts.IsCancellationRequested)
+        {
+            _thumbnailViewportCts = CancellationTokenSource.CreateLinkedTokenSource(_thumbnailCts.Token);
         }
     }
 
@@ -3289,7 +3729,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         builder.AppendLine($"记住主窗口状态：{FormatOnOff(_viewerSettings.RememberMainWindowPlacement)}");
         builder.AppendLine($"自动监视目录变化：{FormatOnOff(_viewerSettings.WatchFolderChanges)}");
         builder.AppendLine($"切图保持缩放：{FormatOnOff(_viewerSettings.KeepViewStateWhenNavigating)}");
-        builder.AppendLine($"显示目录统计：{FormatOnOff(_viewerSettings.ShowDirectoryStats)}");
         builder.AppendLine($"显示动图控制：{FormatOnOff(_viewerSettings.ShowAnimationControls)}");
         builder.AppendLine($"显示操作提醒：{FormatOnOff(_viewerSettings.ShowOperationNotifications)}");
         builder.AppendLine($"空闲时后台加载当前原图：{FormatOnOff(_viewerSettings.LoadFullResolutionWhenIdle)}");
@@ -3548,7 +3987,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             _catalog.RemoveCurrent();
             RefreshThumbnailItems();
-            StartDirectoryStatsUpdate();
 
             if (_catalog.Count > 0)
             {
@@ -3646,7 +4084,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 CancelCatalogCompletion();
                 _catalog.LoadFromFolder(folder);
                 RefreshThumbnailItems();
-                StartDirectoryStatsUpdate();
                 if (_catalog.Count > 0)
                 {
                     EnterDefaultFitMode();
@@ -3889,7 +4326,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _isFavoritesView = false;
             _catalog.LoadFromPaths([]);
             RefreshThumbnailItems();
-            StartDirectoryStatsUpdate();
             ClearImage();
             if (showEmptyMessage)
             {
@@ -3906,7 +4342,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _isFavoritesView = true;
         _catalog.LoadFromPaths(paths, preferredPath);
         RefreshThumbnailItems();
-        StartDirectoryStatsUpdate();
         EnterDefaultFitMode();
         await LoadCurrentAsync();
         ShowBoundaryToast($"收藏：{_catalog.Count:N0} 个文件");
@@ -4201,7 +4636,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         var shouldReloadCurrent = string.Equals(_catalog.CurrentPath, fullPath, StringComparison.OrdinalIgnoreCase);
         RefreshThumbnailItems();
-        StartDirectoryStatsUpdate();
         UpdateInfoPanel();
         UpdateWindowTitle(_catalog.CurrentPath);
         UpdateCommands();
@@ -4301,7 +4735,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         UpdateThumbnailSidebarVisibility();
         UpdateThumbnailSelection();
         QueueVisibleThumbnails();
-        StartDirectoryStatsUpdate();
         UpdateCommands();
         SaveViewerSettings();
 
@@ -4341,8 +4774,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void RefreshThumbnailItems()
     {
+        CancelQuickSearchQuery();
+        _quickSearchResult = null;
+        _quickSearchIndex.Reset(_catalog.Paths);
+        _thumbnailScrollIdleTimer.Stop();
+        _isThumbnailScrollActive = false;
+        _thumbnailViewportCts?.Cancel();
+        _thumbnailViewportCts?.Dispose();
+        _thumbnailViewportCts = null;
+        _thumbnailViewportGeneration++;
         _thumbnailCts?.Cancel();
         _thumbnailCts?.Dispose();
+        _thumbnailViewportCts?.Cancel();
+        _thumbnailViewportCts?.Dispose();
+        _thumbnailViewportCts = null;
         _thumbnailCts = null;
         _thumbnailGeneration++;
 
@@ -4368,6 +4813,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         _thumbnailCts = new CancellationTokenSource();
+        _thumbnailViewportCts = CancellationTokenSource.CreateLinkedTokenSource(_thumbnailCts.Token);
         _thumbnailItemsNeedRefresh = false;
         _thumbnailScrollViewer = null;
         _thumbnailSearchItems = null;
@@ -4387,7 +4833,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (ShouldShowQuickSearchThumbnailResults())
         {
-            ApplyQuickSearchThumbnailFilter();
+            RebuildThumbnailRows();
+            UpdateThumbnailSidebarTitle();
+            UpdateThumbnailSelection();
+            QueueVisibleThumbnails();
+            _quickSearchDebounceTimer.Stop();
+            _quickSearchDebounceTimer.Start();
         }
         else
         {
@@ -4396,304 +4847,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             UpdateThumbnailSelection();
             QueueVisibleThumbnails();
         }
-    }
-
-    private void StartDirectoryStatsUpdate()
-    {
-        _directoryStatsCts?.Cancel();
-        _directoryStatsCts = null;
-
-        if (!_viewerSettings.ShowDirectoryStats || _catalog.Count == 0)
-        {
-            SetDirectoryStatsText(string.Empty);
-            DirectoryStatsPanel.Visibility = Visibility.Collapsed;
-            return;
-        }
-
-        var paths = _catalog.Paths.ToArray();
-        var folder = _catalog.SourceFolder;
-        if (paths.Length > DirectoryStatsFullScanLimit)
-        {
-            DirectoryStatsPanel.Visibility = Visibility.Visible;
-            SetDirectoryStatsText("超过上限", isWarning: true);
-            return;
-        }
-
-        var videoCount = paths.Count(static path => ImageCatalog.IsSupportedVideoPath(path));
-        var animatedImageCount = paths.Count(static path => !ImageCatalog.IsSupportedVideoPath(path)
-            && ImageCatalog.IsLikelyAnimatedImagePath(path));
-        var imageCount = paths.Length - videoCount - animatedImageCount;
-        DirectoryStatsPanel.Visibility = Visibility.Visible;
-
-        if (_isFavoritesView || string.IsNullOrWhiteSpace(folder))
-        {
-            SetDirectoryStatsText(paths.Length, imageCount, animatedImageCount, videoCount, null, "收藏");
-            return;
-        }
-
-        SetDirectoryStatsText(paths.Length, imageCount, animatedImageCount, videoCount, null, "统计中");
-        var cts = new CancellationTokenSource();
-        _directoryStatsCts = cts;
-        _ = UpdateDirectoryStatsAsync(paths, imageCount, animatedImageCount, videoCount, cts);
-    }
-
-    private async Task UpdateDirectoryStatsAsync(
-        IReadOnlyList<string> paths,
-        int imageCount,
-        int animatedImageCount,
-        int videoCount,
-        CancellationTokenSource cts)
-    {
-        try
-        {
-            var token = cts.Token;
-            var totalBytes = await Task.Run(() =>
-            {
-                long total = 0;
-                foreach (var path in paths)
-                {
-                    token.ThrowIfCancellationRequested();
-                    try
-                    {
-                        total += new FileInfo(path).Length;
-                    }
-                    catch (Exception ex) when (ex is IOException
-                        or UnauthorizedAccessException
-                        or FileNotFoundException
-                        or DirectoryNotFoundException)
-                    {
-                    }
-                }
-
-                return total;
-            }, token);
-
-            await Dispatcher.InvokeAsync(() =>
-            {
-                if (!ReferenceEquals(_directoryStatsCts, cts) || cts.IsCancellationRequested)
-                {
-                    return;
-                }
-
-                SetDirectoryStatsText(paths.Count, imageCount, animatedImageCount, videoCount, totalBytes, null);
-            }, DispatcherPriority.Background);
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        finally
-        {
-            if (ReferenceEquals(_directoryStatsCts, cts))
-            {
-                _directoryStatsCts = null;
-            }
-
-            cts.Dispose();
-        }
-    }
-
-    private void SetDirectoryStatsText(
-        int totalCount,
-        int imageCount,
-        int animatedImageCount,
-        int videoCount,
-        long? totalBytes,
-        string? suffix)
-    {
-        var segments = BuildDirectoryStatsSegments(totalCount, imageCount, animatedImageCount, videoCount, totalBytes, suffix);
-        var plainText = string.Join(" ", segments.Select(static segment => segment.Text));
-        _directoryStatsPlainText = plainText;
-        DirectoryStatsPanel.ToolTip = plainText;
-        DirectoryStatsWarningText.Visibility = Visibility.Collapsed;
-        SetDirectoryStatsValues(segments);
-
-        UpdateDirectoryStatsTextFit();
-    }
-
-    private static List<(string Text, Brush Foreground)> BuildDirectoryStatsSegments(
-        int totalCount,
-        int imageCount,
-        int animatedImageCount,
-        int videoCount,
-        long? totalBytes,
-        string? suffix)
-    {
-        var segments = new List<(string Text, Brush Foreground)>();
-        var mediaKindCount = 0;
-        mediaKindCount += imageCount > 0 ? 1 : 0;
-        mediaKindCount += animatedImageCount > 0 ? 1 : 0;
-        mediaKindCount += videoCount > 0 ? 1 : 0;
-
-        if (mediaKindCount > 1)
-        {
-            segments.Add(($"{totalCount:N0}项", DirectoryStatsTotalBrush));
-        }
-
-        if (imageCount > 0)
-        {
-            segments.Add(($"图{imageCount:N0}", DirectoryStatsImageBrush));
-        }
-
-        if (animatedImageCount > 0)
-        {
-            segments.Add(($"动图{animatedImageCount:N0}", DirectoryStatsAnimatedBrush));
-        }
-
-        if (videoCount > 0)
-        {
-            segments.Add(($"视频{videoCount:N0}", DirectoryStatsVideoBrush));
-        }
-
-        if (totalBytes is not null)
-        {
-            segments.Add((FormatFileSize(totalBytes.Value), DirectoryStatsSizeBrush));
-        }
-        else if (!string.IsNullOrWhiteSpace(suffix))
-        {
-            segments.Add((suffix, DirectoryStatsNormalBrush));
-        }
-
-        return segments;
-    }
-
-    private void SetDirectoryStatsValues(IReadOnlyList<(string Text, Brush Foreground)> segments)
-    {
-        var textBlocks = GetDirectoryStatsValueTextBlocks().ToArray();
-        foreach (var textBlock in textBlocks)
-        {
-            SetDirectoryStatsValue(textBlock, string.Empty, DirectoryStatsNormalBrush);
-        }
-
-        var columns = GetDirectoryStatsSlotColumns(segments.Count);
-        for (var i = 0; i < segments.Count && i < textBlocks.Length; i++)
-        {
-            Grid.SetColumn(textBlocks[i], columns[i]);
-            SetDirectoryStatsValue(textBlocks[i], segments[i].Text, segments[i].Foreground);
-        }
-    }
-
-    private static int[] GetDirectoryStatsSlotColumns(int count)
-    {
-        return count switch
-        {
-            <= 1 => [0],
-            2 => [0, 2],
-            3 => [0, 4, 8],
-            4 => [0, 2, 6, 8],
-            _ => [0, 2, 4, 6, 8],
-        };
-    }
-
-    private static void SetDirectoryStatsValue(TextBlock textBlock, string text, Brush foreground)
-    {
-        textBlock.Text = text;
-        textBlock.Foreground = foreground;
-        textBlock.Visibility = string.IsNullOrWhiteSpace(text) ? Visibility.Collapsed : Visibility.Visible;
-    }
-
-    private void SetDirectoryStatsText(string text, bool isWarning = false)
-    {
-        _directoryStatsPlainText = text;
-        DirectoryStatsPanel.ToolTip = string.IsNullOrWhiteSpace(text) ? null : text;
-        SetDirectoryStatsValue(DirectoryStatsTotalText, string.Empty, DirectoryStatsTotalBrush);
-        SetDirectoryStatsValue(DirectoryStatsImageText, string.Empty, DirectoryStatsImageBrush);
-        SetDirectoryStatsValue(DirectoryStatsAnimatedText, string.Empty, DirectoryStatsAnimatedBrush);
-        SetDirectoryStatsValue(DirectoryStatsVideoText, string.Empty, DirectoryStatsVideoBrush);
-        SetDirectoryStatsValue(DirectoryStatsExtraText, string.Empty, DirectoryStatsNormalBrush);
-        DirectoryStatsWarningText.Text = text;
-        DirectoryStatsWarningText.Foreground = isWarning ? DirectoryStatsWarningBrush : DirectoryStatsNormalBrush;
-        DirectoryStatsWarningText.Visibility = string.IsNullOrWhiteSpace(text) ? Visibility.Collapsed : Visibility.Visible;
-        UpdateDirectoryStatsTextFit();
-    }
-
-    private void UpdateDirectoryStatsTextFit()
-    {
-        if (!DirectoryStatsPanel.IsVisible
-            || DirectoryStatsPanel.Visibility != Visibility.Visible
-            || string.IsNullOrWhiteSpace(_directoryStatsPlainText))
-        {
-            SetDirectoryStatsFontSize(DirectoryStatsBaseFontSize);
-            return;
-        }
-
-        var availableWidth = DirectoryStatsPanel.ActualWidth;
-        if (availableWidth <= 1)
-        {
-            Dispatcher.BeginInvoke(new Action(UpdateDirectoryStatsTextFit), DispatcherPriority.Loaded);
-            return;
-        }
-
-        var textWidth = MeasureDirectoryStatsContentWidth(DirectoryStatsBaseFontSize);
-        var targetFontSize = textWidth <= availableWidth
-            ? DirectoryStatsBaseFontSize
-            : Math.Max(DirectoryStatsMinFontSize, DirectoryStatsBaseFontSize * availableWidth / textWidth);
-
-        SetDirectoryStatsFontSize(Math.Round(targetFontSize, 1));
-    }
-
-    private void SetDirectoryStatsFontSize(double fontSize)
-    {
-        if (Math.Abs(DirectoryStatsTotalText.FontSize - fontSize) < 0.05)
-        {
-            return;
-        }
-
-        foreach (var textBlock in GetDirectoryStatsTextBlocks())
-        {
-            textBlock.FontSize = fontSize;
-            textBlock.LineHeight = Math.Ceiling(fontSize + 3);
-        }
-    }
-
-    private double MeasureDirectoryStatsContentWidth(double fontSize)
-    {
-        if (DirectoryStatsWarningText.Visibility == Visibility.Visible)
-        {
-            return MeasureDirectoryStatsTextWidth(DirectoryStatsWarningText.Text, fontSize);
-        }
-
-        return GetDirectoryStatsValueTextBlocks()
-            .Where(static textBlock => textBlock.Visibility == Visibility.Visible && !string.IsNullOrWhiteSpace(textBlock.Text))
-            .Sum(textBlock => MeasureDirectoryStatsTextWidth(textBlock.Text, fontSize));
-    }
-
-    private IEnumerable<TextBlock> GetDirectoryStatsValueTextBlocks()
-    {
-        yield return DirectoryStatsTotalText;
-        yield return DirectoryStatsImageText;
-        yield return DirectoryStatsAnimatedText;
-        yield return DirectoryStatsVideoText;
-        yield return DirectoryStatsExtraText;
-    }
-
-    private IEnumerable<TextBlock> GetDirectoryStatsTextBlocks()
-    {
-        foreach (var textBlock in GetDirectoryStatsValueTextBlocks())
-        {
-            yield return textBlock;
-        }
-
-        yield return DirectoryStatsWarningText;
-    }
-
-    private double MeasureDirectoryStatsTextWidth(string text, double fontSize)
-    {
-        var typeface = new Typeface(
-            DirectoryStatsTotalText.FontFamily,
-            DirectoryStatsTotalText.FontStyle,
-            DirectoryStatsTotalText.FontWeight,
-            DirectoryStatsTotalText.FontStretch);
-        var pixelsPerDip = VisualTreeHelper.GetDpi(DirectoryStatsPanel).PixelsPerDip;
-        var formattedText = new FormattedText(
-            text,
-            CultureInfo.CurrentUICulture,
-            FlowDirection.LeftToRight,
-            typeface,
-            fontSize,
-            DirectoryStatsNormalBrush,
-            pixelsPerDip);
-
-        return formattedText.WidthIncludingTrailingWhitespace;
     }
 
     private void RebuildThumbnailRows()
@@ -4730,8 +4883,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void QueueVisibleThumbnails()
     {
+        UpdateVisibleThumbnailRange(queueLoads: true, ThumbnailVisibleBufferRows);
+    }
+
+    private void UpdateVisibleThumbnailRange(bool queueLoads, int bufferRows)
+    {
         var displayItems = GetDisplayedThumbnailItems();
-        if (displayItems.Count == 0 || _thumbnailCts is null || !_showThumbnailSidebar)
+        if (displayItems.Count == 0 || _thumbnailViewportCts is null || !_showThumbnailSidebar)
         {
             _thumbnailVisibleStartIndex = 0;
             _thumbnailVisibleEndIndex = -1;
@@ -4751,8 +4909,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
         }
 
-        var startRow = Math.Max(0, firstRow - ThumbnailVisibleBufferRows);
-        var endRow = Math.Min(_thumbnailRows.Count - 1, firstRow + visibleRows + ThumbnailVisibleBufferRows);
+        var startRow = Math.Max(0, firstRow - bufferRows);
+        var endRow = Math.Min(_thumbnailRows.Count - 1, firstRow + visibleRows + bufferRows);
         if (endRow < startRow)
         {
             return;
@@ -4770,6 +4928,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         PrunePendingThumbnailLoadsOutsideActiveRange();
 
+        if (!queueLoads)
+        {
+            return;
+        }
+
         for (var index = startIndex; index <= endIndex; index++)
         {
             QueueThumbnailLoad(displayItems[index]);
@@ -4778,7 +4941,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void QueueThumbnailLoadsAroundIndex(IReadOnlyList<ThumbnailItem> items, int centerIndex, int radius)
     {
-        if (centerIndex < 0 || centerIndex >= items.Count || _thumbnailCts is null)
+        if (centerIndex < 0 || centerIndex >= items.Count || _thumbnailViewportCts is null)
         {
             return;
         }
@@ -4814,7 +4977,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        if (_thumbnailCts is null)
+        if (_thumbnailViewportCts is null)
         {
             return;
         }
@@ -4830,15 +4993,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         item.IsLoading = true;
         item.StatusText = "加载中";
         var generation = _thumbnailGeneration;
-        var token = _thumbnailCts.Token;
-        _ = LoadThumbnailQueuedAsync(item, generation, token);
+        var viewportGeneration = _thumbnailViewportGeneration;
+        var token = _thumbnailViewportCts.Token;
+        _ = LoadThumbnailQueuedAsync(item, generation, viewportGeneration, token);
     }
 
-    private async Task LoadThumbnailQueuedAsync(ThumbnailItem item, int generation, CancellationToken cancellationToken)
+    private async Task LoadThumbnailQueuedAsync(
+        ThumbnailItem item,
+        int generation,
+        int viewportGeneration,
+        CancellationToken cancellationToken)
     {
         try
         {
-            if (!ShouldContinueThumbnailLoad(item, generation, cancellationToken))
+            if (!ShouldContinueThumbnailLoad(item, generation, viewportGeneration, cancellationToken))
             {
                 return;
             }
@@ -4847,7 +5015,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             BitmapSource thumbnail;
             try
             {
-                if (!ShouldContinueThumbnailLoad(item, generation, cancellationToken))
+                if (!ShouldContinueThumbnailLoad(item, generation, viewportGeneration, cancellationToken))
                 {
                     return;
                 }
@@ -4859,14 +5027,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 _thumbnailLoadSemaphore.Release();
             }
 
-            if (cancellationToken.IsCancellationRequested || generation != _thumbnailGeneration)
+            if (cancellationToken.IsCancellationRequested
+                || generation != _thumbnailGeneration
+                || viewportGeneration != _thumbnailViewportGeneration)
             {
                 return;
             }
 
             await Dispatcher.InvokeAsync(() =>
             {
-                if (generation != _thumbnailGeneration || cancellationToken.IsCancellationRequested)
+                if (generation != _thumbnailGeneration
+                    || viewportGeneration != _thumbnailViewportGeneration
+                    || cancellationToken.IsCancellationRequested)
                 {
                     return;
                 }
@@ -4883,7 +5055,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
         catch
         {
-            if (!cancellationToken.IsCancellationRequested && generation == _thumbnailGeneration)
+            if (!cancellationToken.IsCancellationRequested
+                && generation == _thumbnailGeneration
+                && viewportGeneration == _thumbnailViewportGeneration)
             {
                 await Dispatcher.InvokeAsync(() =>
                 {
@@ -4895,12 +5069,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
         finally
         {
-            lock (_thumbnailQueueLock)
+            if (viewportGeneration == _thumbnailViewportGeneration)
             {
-                _queuedThumbnailPaths.Remove(item.Path);
+                lock (_thumbnailQueueLock)
+                {
+                    _queuedThumbnailPaths.Remove(item.Path);
+                }
             }
 
-            if (!cancellationToken.IsCancellationRequested && generation == _thumbnailGeneration)
+            if (!cancellationToken.IsCancellationRequested
+                && generation == _thumbnailGeneration
+                && viewportGeneration == _thumbnailViewportGeneration)
             {
                 await Dispatcher.InvokeAsync(() => item.IsLoading = false, DispatcherPriority.Background);
             }
@@ -4934,10 +5113,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private bool ShouldContinueThumbnailLoad(ThumbnailItem item, int generation, CancellationToken cancellationToken)
+    private bool ShouldContinueThumbnailLoad(
+        ThumbnailItem item,
+        int generation,
+        int viewportGeneration,
+        CancellationToken cancellationToken)
     {
         if (cancellationToken.IsCancellationRequested
             || generation != _thumbnailGeneration
+            || viewportGeneration != _thumbnailViewportGeneration
             || item.Thumbnail is not null
             || item.HasLoadFailed)
         {
@@ -5072,6 +5256,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return true;
         }
 
+        if (_isThumbnailScrollActive)
+        {
+            return false;
+        }
+
         return Math.Abs(item.Index - _catalog.Index) <= ThumbnailPreloadRadius;
     }
 
@@ -5159,7 +5348,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             QueueVisibleThumbnails();
         }
 
-        StartDirectoryStatsUpdate();
         UpdateAnimationControls();
         UpdateCommands();
         ScheduleIdleFullResolutionLoad();

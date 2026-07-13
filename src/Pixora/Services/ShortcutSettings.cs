@@ -1,6 +1,5 @@
 using Pixora.Models;
 using System.IO;
-using System.Text.Json;
 using System.Windows.Input;
 
 namespace Pixora.Services;
@@ -66,16 +65,9 @@ public sealed class ShortcutSettings
     public static ShortcutSettings Load()
     {
         var settings = CreateDefault();
-        var path = SettingsPath;
-        if (!File.Exists(path))
-        {
-            return settings;
-        }
-
         try
         {
-            var json = File.ReadAllText(path);
-            var data = JsonSerializer.Deserialize<ShortcutSettingsData>(json);
+            var data = AtomicJsonFile.Load<ShortcutSettingsData>(SettingsPath);
             if (data?.Bindings is null)
             {
                 return settings;
@@ -324,12 +316,6 @@ public sealed class ShortcutSettings
     public void Save()
     {
         var path = SettingsPath;
-        var folder = Path.GetDirectoryName(path);
-        if (!string.IsNullOrWhiteSpace(folder))
-        {
-            Directory.CreateDirectory(folder);
-        }
-
         var data = new ShortcutSettingsData
         {
             Bindings = _bindings
@@ -340,8 +326,7 @@ public sealed class ShortcutSettings
                 .ToList(),
         };
 
-        var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(path, json);
+        AtomicJsonFile.Save(path, data);
     }
 
     private static string SettingsPath =>

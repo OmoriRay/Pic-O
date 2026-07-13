@@ -1,5 +1,4 @@
 using System.IO;
-using System.Text.Json;
 
 namespace Pixora.Services;
 
@@ -38,15 +37,9 @@ public sealed class BatchCompressionSettings
 
     public static BatchCompressionSettings Load(string path)
     {
-        if (!File.Exists(path))
-        {
-            return new BatchCompressionSettings();
-        }
-
         try
         {
-            var json = File.ReadAllText(path);
-            var settings = JsonSerializer.Deserialize<BatchCompressionSettings>(json) ?? new BatchCompressionSettings();
+            var settings = AtomicJsonFile.Load<BatchCompressionSettings>(path) ?? new BatchCompressionSettings();
             settings.Normalize();
             return settings;
         }
@@ -65,14 +58,7 @@ public sealed class BatchCompressionSettings
     {
         Normalize();
 
-        var folder = Path.GetDirectoryName(path);
-        if (!string.IsNullOrWhiteSpace(folder))
-        {
-            Directory.CreateDirectory(folder);
-        }
-
-        var json = JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(path, json);
+        AtomicJsonFile.Save(path, this);
     }
 
     private void Normalize()

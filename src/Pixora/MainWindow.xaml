@@ -24,6 +24,7 @@
         Loaded="Window_Loaded"
         Closing="Window_Closing"
         PreviewKeyDown="Window_KeyDown"
+        PreviewMouseDown="Window_PreviewMouseDown"
         AllowDrop="True"
         PreviewDragOver="Window_PreviewDragOver"
         Drop="Window_Drop"
@@ -309,10 +310,12 @@
                 <StackPanel Orientation="Horizontal">
                     <TextBlock x:Name="CatalogScanText"
                                Text="正在补齐目录..."
+                               AutomationProperties.LiveSetting="Polite"
                                VerticalAlignment="Center"
                                Foreground="#E6EBF0"
                                FontSize="12" />
                     <Button Content="取消"
+                            AutomationProperties.Name="取消目录补齐"
                             Margin="8,0,0,0"
                             MinWidth="48"
                             MinHeight="26"
@@ -379,6 +382,7 @@
             </Border>
 
             <Border x:Name="BoundaryToast"
+                    AutomationProperties.LiveSetting="Polite"
                     HorizontalAlignment="Center"
                     VerticalAlignment="Top"
                     Margin="0,18,0,0"
@@ -418,16 +422,11 @@
                         BorderThickness="0,0,0,1"
                         Padding="10,8">
                     <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock x:Name="ThumbnailSidebarTitle"
-                                   Grid.Row="0"
                                    Grid.Column="0"
                                    VerticalAlignment="Center"
                                    Text="图片预览"
@@ -435,73 +434,20 @@
                                    FontSize="13"
                                    FontWeight="SemiBold" />
                         <Button x:Name="ThumbnailColumnToggleButton"
-                                Grid.Row="0"
                                 Grid.Column="1"
                                 Content="双列"
                                 MinWidth="44"
                                 MinHeight="26"
                                 Padding="8,3"
                                 FontSize="12"
+                                AutomationProperties.Name="切换缩略图列数"
                                 Click="ToggleThumbnailColumnsMenuItem_Click" />
-                        <Grid x:Name="DirectoryStatsPanel"
-                              Grid.Row="1"
-                              Grid.ColumnSpan="2"
-                              Margin="0,5,0,0"
-                              Visibility="Collapsed">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock x:Name="DirectoryStatsTotalText"
-                                       Grid.Column="0"
-                                       FontSize="9.5"
-                                       LineHeight="13"
-                                       TextTrimming="CharacterEllipsis"
-                                       TextWrapping="NoWrap" />
-                            <TextBlock x:Name="DirectoryStatsImageText"
-                                       Grid.Column="2"
-                                       FontSize="9.5"
-                                       LineHeight="13"
-                                       TextTrimming="CharacterEllipsis"
-                                       TextWrapping="NoWrap" />
-                            <TextBlock x:Name="DirectoryStatsAnimatedText"
-                                       Grid.Column="4"
-                                       FontSize="9.5"
-                                       LineHeight="13"
-                                       TextTrimming="CharacterEllipsis"
-                                       TextWrapping="NoWrap" />
-                            <TextBlock x:Name="DirectoryStatsVideoText"
-                                       Grid.Column="6"
-                                       FontSize="9.5"
-                                       LineHeight="13"
-                                       TextTrimming="CharacterEllipsis"
-                                       TextWrapping="NoWrap" />
-                            <TextBlock x:Name="DirectoryStatsExtraText"
-                                       Grid.Column="8"
-                                       FontSize="9.5"
-                                       LineHeight="13"
-                                       TextTrimming="CharacterEllipsis"
-                                       TextWrapping="NoWrap" />
-                            <TextBlock x:Name="DirectoryStatsWarningText"
-                                       Grid.ColumnSpan="9"
-                                       FontSize="9.5"
-                                       LineHeight="13"
-                                       TextAlignment="Center"
-                                       TextTrimming="CharacterEllipsis"
-                                       TextWrapping="NoWrap"
-                                       Visibility="Collapsed" />
-                        </Grid>
                     </Grid>
                 </Border>
 
                 <ListBox x:Name="ThumbnailList"
+                         AutomationProperties.Name="当前目录缩略图"
+                         AutomationProperties.HelpText="使用上一张和下一张快捷键浏览图片"
                          Background="Transparent"
                          BorderThickness="0"
                          Foreground="#F2F5F7"
@@ -772,7 +718,15 @@
                     BorderThickness="0"
                     CornerRadius="22"
                     Padding="0"
+                    AutomationProperties.HelpText="按住 Ctrl 并拖动可调整快速搜索位置"
+                    PreviewMouseLeftButtonDown="QuickSearchGlass_PreviewMouseLeftButtonDown"
+                    PreviewMouseLeftButtonUp="QuickSearchGlass_PreviewMouseLeftButtonUp"
+                    PreviewMouseMove="QuickSearchGlass_PreviewMouseMove"
+                    LostMouseCapture="QuickSearchGlass_LostMouseCapture"
                     SizeChanged="QuickSearchGlass_SizeChanged">
+                <Border.RenderTransform>
+                    <TranslateTransform x:Name="QuickSearchPositionTransform" />
+                </Border.RenderTransform>
                 <Border.Effect>
                     <DropShadowEffect x:Name="QuickSearchShadow"
                                       BlurRadius="22"
@@ -877,9 +831,10 @@
                             CornerRadius="21"
                             IsHitTestVisible="False" />
 
-                    <Grid Margin="12,0">
+                    <Grid Margin="12,0"
+                          KeyboardNavigation.TabNavigation="Cycle">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="46" />
+                            <ColumnDefinition Width="82" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
@@ -887,12 +842,14 @@
 
                         <Button x:Name="QuickSearchModeButton"
                                 Grid.Column="0"
-                                Width="41"
+                                Width="78"
                                 Height="38"
                                 Padding="0"
                                 Background="Transparent"
                                 BorderThickness="0"
-                                Focusable="False"
+                                Focusable="True"
+                                IsTabStop="True"
+                                AutomationProperties.Name="按图片序号搜索"
                                 Cursor="Hand"
                                 Click="QuickSearchModeButton_Click">
                             <Button.Template>
@@ -910,7 +867,10 @@
                                 </ControlTemplate>
                             </Button.Template>
                             <Button.Content>
-                                <Grid Width="36" Height="34">
+                                <StackPanel Height="34"
+                                            Orientation="Horizontal"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center">
                                     <Image Width="28"
                                            Height="28"
                                            HorizontalAlignment="Center"
@@ -922,7 +882,14 @@
                                                          CacheOption="OnLoad" />
                                         </Image.Source>
                                     </Image>
-                                </Grid>
+                                    <TextBlock x:Name="QuickSearchModeText"
+                                               Margin="6,0,0,0"
+                                               Text="序号"
+                                               Foreground="#D9EFF2F5"
+                                               FontSize="11"
+                                               FontWeight="SemiBold"
+                                               VerticalAlignment="Center" />
+                                </StackPanel>
                             </Button.Content>
                         </Button>
 
@@ -935,12 +902,16 @@
                                      BorderThickness="0"
                                      FocusVisualStyle="{x:Null}"
                                      Foreground="#FFFFFF"
-                                     CaretBrush="#FFFFFF"
+                                     CaretBrush="Transparent"
                                      SelectionBrush="#58FFFFFF"
                                      FontSize="16"
                                      FontWeight="Normal"
                                      VerticalContentAlignment="Center"
+                                     AutomationProperties.Name="快速搜索输入"
+                                     AutomationProperties.HelpText="输入图片序号并按回车跳转"
                                      InputMethod.IsInputMethodEnabled="True"
+                                     PreviewMouseLeftButtonDown="QuickSearchTextBox_PreviewMouseLeftButtonDown"
+                                     LostKeyboardFocus="QuickSearchTextBox_LostKeyboardFocus"
                                      TextChanged="QuickSearchTextBox_TextChanged">
                                 <TextBox.Template>
                                     <ControlTemplate TargetType="{x:Type TextBox}">
@@ -957,13 +928,6 @@
                                     </ControlTemplate>
                                 </TextBox.Template>
                             </TextBox>
-                            <TextBlock x:Name="QuickSearchPlaceholderText"
-                                       Text="输入图片序号"
-                                       Margin="6,0,0,0"
-                                       Foreground="#BCEFF2F5"
-                                       FontSize="15"
-                                       VerticalAlignment="Center"
-                                       IsHitTestVisible="False" />
                         </Grid>
 
                         <TextBlock x:Name="QuickSearchHintText"
@@ -972,6 +936,7 @@
                                    Margin="12,0,14,0"
                                    Foreground="#D9EFF2F5"
                                    FontSize="11"
+                                   AutomationProperties.LiveSetting="Polite"
                                    VerticalAlignment="Center"
                                    TextTrimming="CharacterEllipsis" />
 
@@ -982,7 +947,9 @@
                                 Padding="0"
                                 Background="Transparent"
                                 BorderThickness="0"
-                                Focusable="False"
+                                Focusable="True"
+                                IsTabStop="True"
+                                AutomationProperties.Name="执行快速搜索"
                                 Cursor="Hand"
                                 ToolTip="跳转"
                                 Click="QuickSearchGoButton_Click">

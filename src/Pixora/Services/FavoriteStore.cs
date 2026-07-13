@@ -1,5 +1,4 @@
 using System.IO;
-using System.Text.Json;
 
 namespace Pixora.Services;
 
@@ -32,15 +31,9 @@ public sealed class FavoriteStore
 
     public static FavoriteStore Load(string path)
     {
-        if (!File.Exists(path))
-        {
-            return new FavoriteStore();
-        }
-
         try
         {
-            var json = File.ReadAllText(path);
-            var data = JsonSerializer.Deserialize<FavoriteStoreData>(json);
+            var data = AtomicJsonFile.Load<FavoriteStoreData>(path);
             return new FavoriteStore(data?.Paths ?? []);
         }
         catch
@@ -92,19 +85,12 @@ public sealed class FavoriteStore
 
     public void Save(string path)
     {
-        var folder = Path.GetDirectoryName(path);
-        if (!string.IsNullOrWhiteSpace(folder))
-        {
-            Directory.CreateDirectory(folder);
-        }
-
         var data = new FavoriteStoreData
         {
             Paths = Paths.ToList(),
         };
 
-        var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(path, json);
+        AtomicJsonFile.Save(path, data);
     }
 
     private static string StorePath =>

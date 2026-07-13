@@ -18,6 +18,8 @@ public partial class ShortcutSettingsWindow : Window
     private ShortcutAction? _capturingAction;
     private KeyboardShortcut? _shortcutBeingReplaced;
     private bool _windowPlacementSaved;
+    private CancellationTokenSource? _thumbnailCacheInfoCts;
+    private CancellationTokenSource? _thumbnailCacheMaintenanceCts;
     private List<ShortcutRow> _shortcutRows = [];
     private int _shortcutGridColumnCount = 1;
     private const double ShortcutGridItemGap = 8;
@@ -42,7 +44,6 @@ public partial class ShortcutSettingsWindow : Window
         ShowQuickSearchOnStartupCheckBox.IsChecked = viewerSettings.ShowQuickSearchOnStartup;
         RememberMainWindowPlacementCheckBox.IsChecked = viewerSettings.RememberMainWindowPlacement;
         StartMainWindowMaximizedCheckBox.IsChecked = viewerSettings.StartMainWindowMaximized;
-        ShowDirectoryStatsCheckBox.IsChecked = viewerSettings.ShowDirectoryStats;
         ShowAnimationControlsCheckBox.IsChecked = viewerSettings.ShowAnimationControls;
         ShowOperationNotificationsCheckBox.IsChecked = viewerSettings.ShowOperationNotifications;
         LoadFullResolutionWhenIdleCheckBox.IsChecked = viewerSettings.LoadFullResolutionWhenIdle;
@@ -52,7 +53,7 @@ public partial class ShortcutSettingsWindow : Window
         ThumbnailDiskCacheCheckBox.IsChecked = viewerSettings.UseThumbnailDiskCache;
         IncludePrivatePathsInDiagnosticsCheckBox.IsChecked = viewerSettings.IncludePrivatePathsInDiagnostics;
         SelectComboBoxValue(ThumbnailDiskCacheSizeComboBox, viewerSettings.ThumbnailDiskCacheMegabytes, ViewerSettings.DefaultThumbnailDiskCacheMegabytes);
-        RefreshThumbnailDiskCacheInfo();
+        _ = RefreshThumbnailDiskCacheInfoAsync();
         AppVersionText.Text = $"{AppInfo.Name} {GetAppVersion()}";
         RefreshRows();
         UpdateButtons();
@@ -60,6 +61,8 @@ public partial class ShortcutSettingsWindow : Window
 
     private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
+        _thumbnailCacheInfoCts?.Cancel();
+        _thumbnailCacheMaintenanceCts?.Cancel();
         if (_windowPlacementSaved)
         {
             return;
@@ -462,7 +465,6 @@ public partial class ShortcutSettingsWindow : Window
             _viewerSettings.ShowQuickSearchOnStartup = ShowQuickSearchOnStartupCheckBox.IsChecked == true;
             _viewerSettings.RememberMainWindowPlacement = RememberMainWindowPlacementCheckBox.IsChecked == true;
             _viewerSettings.StartMainWindowMaximized = StartMainWindowMaximizedCheckBox.IsChecked == true;
-            _viewerSettings.ShowDirectoryStats = ShowDirectoryStatsCheckBox.IsChecked == true;
             _viewerSettings.ShowAnimationControls = ShowAnimationControlsCheckBox.IsChecked == true;
             _viewerSettings.ShowOperationNotifications = ShowOperationNotificationsCheckBox.IsChecked == true;
             _viewerSettings.LoadFullResolutionWhenIdle = LoadFullResolutionWhenIdleCheckBox.IsChecked == true;
@@ -489,7 +491,7 @@ public partial class ShortcutSettingsWindow : Window
         Close();
     }
 
-    private void ClearThumbnailDiskCacheButton_Click(object sender, RoutedEventArgs e)
+    private async void ClearThumbnailDiskCacheButton_Click(object sender, RoutedEventArgs e)
     {
         var confirm = MessageBox.Show(
             this,
@@ -503,10 +505,16 @@ public partial class ShortcutSettingsWindow : Window
             return;
         }
 
+        _thumbnailCacheMaintenanceCts?.Cancel();
+        _thumbnailCacheMaintenanceCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _thumbnailCacheMaintenanceCts = cts;
+        ClearThumbnailDiskCacheButton.IsEnabled = false;
+        ThumbnailDiskCachePathText.Text = "正在清理缩略图缓存…";
         try
         {
-            var result = new ThumbnailDiskCache().Clear();
-            RefreshThumbnailDiskCacheInfo();
+            var result = await new ThumbnailDiskCache().ClearAsync(cts.Token);
+            await RefreshThumbnailDiskCacheInfoAsync();
             if (ShowOperationNotificationsCheckBox.IsChecked == true)
             {
                 MessageBox.Show(
@@ -517,10 +525,23 @@ public partial class ShortcutSettingsWindow : Window
                     MessageBoxImage.Information);
             }
         }
+        catch (OperationCanceledException)
+        {
+        }
         catch (Exception ex)
         {
             ErrorLog.WriteException("ClearThumbnailDiskCache", "清理缩略图缓存失败。", ex);
             MessageBox.Show(this, $"清理缩略图缓存失败：\n{ex.Message}", AppInfo.Name, MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            if (ReferenceEquals(_thumbnailCacheMaintenanceCts, cts))
+            {
+                _thumbnailCacheMaintenanceCts = null;
+            }
+
+            cts.Dispose();
+            ClearThumbnailDiskCacheButton.IsEnabled = true;
         }
     }
 
@@ -715,10 +736,38 @@ public partial class ShortcutSettingsWindow : Window
         return fallback;
     }
 
-    private void RefreshThumbnailDiskCacheInfo()
+    private async Task RefreshThumbnailDiskCacheInfoAsync()
     {
-        var statistics = new ThumbnailDiskCache().GetStatistics();
-        ThumbnailDiskCachePathText.Text = $"保存位置：{ThumbnailDiskCache.DefaultCacheFolder}\n当前占用：{FormatFileSize(statistics.TotalBytes)}，{statistics.FileCount:N0} 项";
+        _thumbnailCacheInfoCts?.Cancel();
+        _thumbnailCacheInfoCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _thumbnailCacheInfoCts = cts;
+        ThumbnailDiskCachePathText.Text = $"保存位置：{ThumbnailDiskCache.DefaultCacheFolder}\n正在统计当前占用…";
+        try
+        {
+            var statistics = await new ThumbnailDiskCache().GetStatisticsAsync(cts.Token);
+            if (!cts.IsCancellationRequested && ReferenceEquals(_thumbnailCacheInfoCts, cts))
+            {
+                ThumbnailDiskCachePathText.Text = $"保存位置：{ThumbnailDiskCache.DefaultCacheFolder}\n当前占用：{FormatFileSize(statistics.TotalBytes)}，{statistics.FileCount:N0} 项";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            ErrorLog.WriteException("RefreshThumbnailDiskCacheInfo", "统计缩略图缓存失败。", ex);
+            ThumbnailDiskCachePathText.Text = $"保存位置：{ThumbnailDiskCache.DefaultCacheFolder}\n当前占用统计失败";
+        }
+        finally
+        {
+            if (ReferenceEquals(_thumbnailCacheInfoCts, cts))
+            {
+                _thumbnailCacheInfoCts = null;
+            }
+
+            cts.Dispose();
+        }
     }
 
     private static string FormatFileSize(long bytes)
