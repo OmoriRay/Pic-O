@@ -43,6 +43,8 @@ internal static class Program
 
         Assert(catalog.MoveTo(firstImage), "Catalog should move to an existing image path.");
         Assert(Path.GetFileName(catalog.CurrentPath) == "1.png", "MoveTo should select the requested image.");
+        var forwardNeighbors = catalog.GetDirectionalNeighborPaths(direction: 1, forwardRadius: 2, oppositeRadius: 1);
+        Assert(Path.GetFileName(forwardNeighbors[0]) == "2.png" && Path.GetFileName(forwardNeighbors[1]) == "10.png", "Directional preloading should prioritize the next images in navigation order.");
         AssertImageCatalogAddsSavedFileKeepingCurrent(root);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -60,6 +62,7 @@ internal static class Program
         AssertMediaCatalogLoaderCancellation(imageFolder);
         AssertVideoMediaSupport(root);
         AssertCatalogSortModes(root);
+        AssertCatalogMetadataCache(root);
         AssertCatalogUpdateHelpers(imageFolder);
         AssertCatalogIncrementalChanges(root);
         AssertFolderChangeMonitor(root);
@@ -68,6 +71,7 @@ internal static class Program
         AssertQuickSearchMatcher();
         AssertQuickSearchInteractionState();
         AssertQuickSearchIndexPerformance();
+        AssertLargeCatalogPerformance();
         AssertViewerSettings(root);
         AssertAtomicJsonPersistence(root);
         AssertMainWindowInputMethodDisabled(root);
@@ -685,6 +689,7 @@ internal static class Program
             .ToArray();
         var index = new QuickSearchIndex();
         index.Reset(paths);
+        Assert(index.InitializedEntryCount == 0, "Quick-search index should defer file-name extraction until a name search runs.");
 
         var stopwatch = Stopwatch.StartNew();
         var broad = index.Search("image_149");
@@ -692,6 +697,7 @@ internal static class Program
         stopwatch.Stop();
 
         Assert(index.Count == pathCount, "Quick-search index should retain every catalog entry.");
+        Assert(index.InitializedEntryCount == pathCount, "A broad search should initialize entries only when they are actually inspected.");
         Assert(broad.MatchingIndices.Count == 1000, "Broad indexed search should find the expected candidate range.");
         Assert(refined.FirstIndex == 149_999 && refined.MatchingIndices.Count == 1, "Refined indexed search should reuse candidates and find the final item.");
         Assert(stopwatch.Elapsed < TimeSpan.FromSeconds(2), $"Indexed search over {pathCount:N0} paths should finish promptly; elapsed {stopwatch.Elapsed.TotalMilliseconds:N0} ms.");
@@ -711,8 +717,64 @@ internal static class Program
         Assert(canceled, "Quick-search index should honor cancellation.");
     }
 
+    private static void AssertLargeCatalogPerformance()
+    {
+        const int itemCount = 150_000;
+        var createdItems = 0;
+        var items = new LazyIndexedList<object>(
+            itemCount,
+            _ =>
+            {
+                createdItems++;
+                return new object();
+            });
+        var rows = new VirtualizedRowCollection<object>(items, columns: 2);
+
+        var stopwatch = Stopwatch.StartNew();
+        Assert(rows.Count == itemCount / 2, "Virtualized thumbnail rows should expose the complete large catalog count.");
+        _ = rows[0];
+        _ = rows[rows.Count / 2];
+        _ = rows[rows.Count - 1];
+        stopwatch.Stop();
+
+        Assert(rows.CreatedRowCount == 3, "Large catalogs should create only rows actually requested by the UI.");
+        Assert(items.CreatedCount == 6 && createdItems == 6, "Two-column thumbnail rows should create only the six visible sample items.");
+        Assert(stopwatch.Elapsed < TimeSpan.FromSeconds(1), $"Virtualized access over {itemCount:N0} items should be immediate; elapsed {stopwatch.Elapsed.TotalMilliseconds:N0} ms.");
+
+        var boundedItems = new LazyIndexedList<object>(itemCount, static _ => new object(), maxCachedItems: 128);
+        var boundedRows = new VirtualizedRowCollection<object>(boundedItems, columns: 2, maxCachedRows: 64);
+        for (var rowIndex = 0; rowIndex < boundedRows.Count; rowIndex++)
+        {
+            _ = boundedRows[rowIndex];
+        }
+
+        Assert(boundedRows.CreatedRowCount <= 64, "Scrolling an entire large catalog should keep only a bounded number of row models.");
+        Assert(boundedItems.CreatedCount <= 128, "Scrolling an entire large catalog should keep only a bounded number of thumbnail item models.");
+
+        var buffer = new ProgressUpdateBuffer<int>();
+        stopwatch.Restart();
+        for (var index = 0; index < 100_000; index++)
+        {
+            buffer.Report(index);
+        }
+
+        var updates = buffer.Drain();
+        stopwatch.Stop();
+        Assert(updates.Count == 100_000 && updates[^1] == 99_999, "Coalesced progress buffering should retain ordered background updates.");
+        Assert(buffer.PendingCount == 0, "Draining progress updates should clear the pending queue.");
+        Assert(stopwatch.Elapsed < TimeSpan.FromSeconds(2), $"Progress buffering should handle 100,000 reports promptly; elapsed {stopwatch.Elapsed.TotalMilliseconds:N0} ms.");
+    }
+
     private static void AssertViewerSettings(string root)
     {
+        Assert(!new ViewerSettings().HideQuickSearchAfterJump, "Quick search should remain visible after a successful jump by default.");
+        Assert(
+            new ViewerSettings().MainImageCacheMegabytes == 768
+            && new ViewerSettings().DisplayPreviewCacheMegabytes == 192
+            && ViewerSettings.AutomaticMainImageCacheCapMegabytes == 8192
+            && ViewerSettings.AutomaticDisplayPreviewCacheCapMegabytes == 2048,
+            "Automatic cache ceilings should be independent from conservative manual defaults.");
+
         var outputFolder = Path.Combine(root, "test-output");
         Directory.CreateDirectory(outputFolder);
         var settingsPath = Path.Combine(outputFolder, "viewer-settings-smoke.json");
@@ -723,6 +785,7 @@ internal static class Program
             UseDoubleThumbnailColumns = false,
             QuickSearchMode = QuickSearchMode.FileName,
             ShowQuickSearchOnStartup = true,
+            HideQuickSearchAfterJump = true,
             QuickSearchOffsetX = 128.5,
             QuickSearchOffsetY = 96.25,
             SavedFileOpenBehavior = SavedFileOpenBehavior.NewWindow,
@@ -752,6 +815,7 @@ internal static class Program
         Assert(!loaded.UseDoubleThumbnailColumns, "Viewer settings should persist thumbnail column preference.");
         Assert(loaded.QuickSearchMode == QuickSearchMode.FileName, "Viewer settings should persist quick-search mode.");
         Assert(loaded.ShowQuickSearchOnStartup, "Viewer settings should persist startup quick-search visibility.");
+        Assert(loaded.HideQuickSearchAfterJump, "Viewer settings should persist whether quick search closes after a successful jump.");
         Assert(loaded.QuickSearchOffsetX == 128.5 && loaded.QuickSearchOffsetY == 96.25, "Viewer settings should persist the draggable quick-search position.");
         Assert(loaded.SavedFileOpenBehavior == SavedFileOpenBehavior.NewWindow, "Viewer settings should persist saved file open behavior.");
         Assert(!loaded.ConfirmDeleteToRecycleBin, "Viewer settings should persist delete confirmation preference.");
@@ -765,6 +829,7 @@ internal static class Program
         Assert(!loaded.WatchFolderChanges, "Viewer settings should persist folder watching behavior.");
         Assert(loaded.MainWindowWidth == 1234 && loaded.MainWindowHeight == 777, "Viewer settings should persist main-window dimensions.");
         Assert(loaded.MainWindowLeft == 33 && loaded.MainWindowTop == 44 && loaded.MainWindowMaximized, "Viewer settings should persist main-window placement and state.");
+
         Assert(!loaded.ShowAnimationControls, "Viewer settings should persist animation control visibility.");
         Assert(!loaded.ShowOperationNotifications, "Viewer settings should persist operation notification visibility.");
         Assert(loaded.ThumbnailDiskCacheMegabytes == 1024, "Viewer settings should persist thumbnail disk cache capacity.");
@@ -824,12 +889,45 @@ internal static class Program
         var previewCache = BitmapSourceMemoryCache.FromMegabytes(1);
         var coordinator = new MemoryCacheCoordinator(imageCache, previewCache);
 
-        coordinator.ApplyConfiguredBudgets(2, 3);
+        coordinator.ApplyConfiguredBudgets(64, 32);
         var snapshot = coordinator.CaptureSnapshot(isProtectionEnabled: false);
-        Assert(snapshot.MainImageBudgetBytes == 2L * 1024 * 1024, "Memory coordinator should apply the main image cache budget.");
-        Assert(snapshot.PreviewBudgetBytes == 3L * 1024 * 1024, "Memory coordinator should apply the preview cache budget.");
-        Assert(MemoryCacheCoordinator.IsUnderPressure(90, 100), "Memory coordinator should detect the 90% memory pressure threshold.");
-        Assert(!MemoryCacheCoordinator.IsUnderPressure(89, 100), "Memory coordinator should not trim below the pressure threshold.");
+        Assert(snapshot.MainImageBudgetBytes == 64L * 1024 * 1024, "Memory coordinator should apply the main image cache budget.");
+        Assert(snapshot.PreviewBudgetBytes == 32L * 1024 * 1024, "Memory coordinator should apply the preview cache budget.");
+        Assert(MemoryCacheCoordinator.IsUnderPressure(85, 100), "Memory coordinator should detect the early 85% system-memory pressure threshold.");
+        Assert(!MemoryCacheCoordinator.IsUnderPressure(84, 100), "Memory coordinator should not trim below the pressure threshold.");
+        Assert(MemoryCacheCoordinator.IsUnderPressure(0, 0, 600L * 1024 * 1024, 2L * 1024 * 1024 * 1024), "Memory coordinator should detect excessive process working-set pressure.");
+        var lowMemoryBudgets = MemoryCacheCoordinator.ResolveBudgets(768, 192, true, 4L * 1024 * 1024 * 1024);
+        Assert(lowMemoryBudgets == new MemoryCacheBudgets(256, 64), "Automatic cache sizing should reduce budgets on 4 GB systems.");
+        var configuredBudgets = MemoryCacheCoordinator.ResolveBudgets(768, 192, false, 4L * 1024 * 1024 * 1024);
+        Assert(configuredBudgets == new MemoryCacheBudgets(768, 192), "Manual cache sizing should keep configured budgets.");
+        Assert(
+            MemoryCacheCoordinator.ResolveBudgets(8192, 2048, true, 16L * 1024 * 1024 * 1024) == new MemoryCacheBudgets(2048, 512),
+            "Automatic cache sizing should use the balanced 16 GB budget.");
+        Assert(
+            MemoryCacheCoordinator.ResolveBudgets(8192, 2048, true, 32L * 1024 * 1024 * 1024) == new MemoryCacheBudgets(4096, 1024),
+            "Automatic cache sizing should use the high-performance 32 GB budget.");
+        Assert(
+            MemoryCacheCoordinator.ResolveBudgets(8192, 2048, true, 64L * 1024 * 1024 * 1024) == new MemoryCacheBudgets(8192, 2048),
+            "Automatic cache sizing should use the maximum 64 GB budget.");
+
+        var highEndProfile = MemoryCacheCoordinator.ResolvePerformanceProfile(
+            8192,
+            2048,
+            true,
+            64L * 1024 * 1024 * 1024,
+            processorCount: 16);
+        Assert(
+            highEndProfile.MainPreloadForwardRadius == 8
+            && highEndProfile.MainPreloadOppositeRadius == 2
+            && highEndProfile.ThumbnailLoadConcurrency == 6,
+            "A 64 GB / 16-thread system should use the high-end preload profile.");
+        var cpuLimitedProfile = MemoryCacheCoordinator.ResolvePerformanceProfile(
+            8192,
+            2048,
+            true,
+            64L * 1024 * 1024 * 1024,
+            processorCount: 4);
+        Assert(cpuLimitedProfile.ThumbnailLoadConcurrency == 2, "Thumbnail concurrency should remain limited on low-core-count CPUs.");
     }
 
     private static void AssertSettingsWindowInitializes()
@@ -839,6 +937,7 @@ internal static class Program
             ThumbnailDiskCacheMegabytes = 1024,
             QuickSearchMode = QuickSearchMode.FileName,
             ShowQuickSearchOnStartup = true,
+            HideQuickSearchAfterJump = true,
         };
         var window = new ShortcutSettingsWindow(ShortcutSettings.Load(), viewerSettings);
         var comboBox = window.FindName("ThumbnailDiskCacheSizeComboBox") as ComboBox;
@@ -846,9 +945,16 @@ internal static class Program
         var generalPage = window.FindName("GeneralPage") as ScrollViewer;
         var quickSearchMode = window.FindName("QuickSearchModeComboBox") as ComboBox;
         var showQuickSearchOnStartup = window.FindName("ShowQuickSearchOnStartupCheckBox") as CheckBox;
+        var hideQuickSearchAfterJump = window.FindName("HideQuickSearchAfterJumpCheckBox") as CheckBox;
         var settingsSearch = window.FindName("SettingsSearchTextBox") as TextBox;
         var interfaceSection = window.FindName("InterfaceSettingsSection") as FrameworkElement;
         var performanceSection = window.FindName("PerformanceSettingsSection") as FrameworkElement;
+        var cacheSizingMode = window.FindName("CacheSizingModeComboBox") as ComboBox;
+        var automaticCacheSummary = window.FindName("AutomaticCacheSummaryText") as TextBlock;
+        var automaticCacheSummaryPanel = window.FindName("AutomaticCacheSummaryPanel") as FrameworkElement;
+        var manualCacheSettings = window.FindName("ManualCacheSettingsPanel") as FrameworkElement;
+        var mainImageCache = window.FindName("MainImageCacheComboBox") as ComboBox;
+        var displayPreviewCache = window.FindName("DisplayPreviewCacheComboBox") as ComboBox;
 
         Assert(comboBox is not null, "Settings window should initialize the thumbnail disk cache capacity selector.");
         Assert(comboBox!.SelectedValue?.ToString() == "1024", "Settings window should select the persisted thumbnail disk cache capacity.");
@@ -856,7 +962,17 @@ internal static class Program
         Assert(generalPage?.ClipToBounds == true, "Settings page should clip scrolling content inside its viewport.");
         Assert(quickSearchMode?.SelectedValue?.ToString() == "FileName", "Settings window should select the persisted quick-search mode.");
         Assert(showQuickSearchOnStartup?.IsChecked == true, "Settings window should select persisted startup quick-search visibility.");
+        Assert(hideQuickSearchAfterJump?.IsChecked == true, "Settings window should select the persisted post-jump quick-search behavior.");
         Assert(settingsSearch is not null, "Settings window should expose an always-visible search input.");
+        Assert(cacheSizingMode?.SelectedValue?.ToString() == "Automatic", "Settings should present automatic cache mode as the default explicit choice.");
+        Assert(automaticCacheSummary?.Text.Contains("当前预算", StringComparison.Ordinal) == true, "Automatic cache mode should show the effective runtime budget.");
+        Assert(automaticCacheSummaryPanel?.Visibility == Visibility.Visible, "Automatic cache mode should show its hardware summary panel.");
+        Assert(manualCacheSettings?.IsEnabled == false, "Automatic cache mode should disable unrelated manual capacity selectors.");
+        Assert(mainImageCache?.Items.Cast<ComboBoxItem>().Any(item => item.Tag?.ToString() == "8192") == true, "Settings should expose an 8 GB main-image cache cap for high-end systems.");
+        Assert(displayPreviewCache?.Items.Cast<ComboBoxItem>().Any(item => item.Tag?.ToString() == "2048") == true, "Settings should expose a 2 GB preview cache cap for high-end systems.");
+        cacheSizingMode!.SelectedValue = "Manual";
+        Assert(manualCacheSettings!.IsEnabled, "Switching to manual cache mode should immediately enable capacity selectors.");
+        Assert(automaticCacheSummaryPanel!.Visibility == Visibility.Collapsed, "Manual cache mode should hide the automatic hardware summary.");
         settingsSearch!.Text = "缓存";
         Assert(performanceSection?.Visibility == Visibility.Visible, "Settings search should keep matching performance and cache settings visible.");
         Assert(interfaceSection?.Visibility == Visibility.Collapsed, "Settings search should hide unrelated interface settings.");
@@ -898,6 +1014,7 @@ internal static class Program
         Assert(xaml.Contains("x:Name=\"QuickSearchPositionTransform\"", StringComparison.Ordinal), "Quick search should expose an independent transform for its persisted drag position.");
         Assert(xaml.Contains("PreviewMouseLeftButtonDown=\"QuickSearchGlass_PreviewMouseLeftButtonDown\"", StringComparison.Ordinal), "Quick search should support Ctrl-drag from the glass bar.");
         Assert(xaml.Contains("<BlurEffect Radius=\"18\"", StringComparison.Ordinal), "Quick search should blur its sampled backdrop instead of using a flat gray fill.");
+        Assert(xaml.Contains("<BitmapCache RenderAtScale=\"1\"", StringComparison.Ordinal), "Quick-search blur should cache its rendered layer during hover and drag animations.");
         Assert(xaml.Contains("x:Name=\"QuickSearchModeButton\"", StringComparison.Ordinal), "Quick search should let the Pixora icon switch search modes.");
         Assert(xaml.Contains("x:Name=\"QuickSearchModeText\"", StringComparison.Ordinal), "Quick search should always show whether the current mode is index or file name.");
         Assert(code.Contains("QuickSearchModeText.Text = searchesByFileName", StringComparison.Ordinal), "Quick-search mode label should update together with the active mode.");
@@ -908,11 +1025,13 @@ internal static class Program
         Assert(xaml.Contains("InputMethod.IsInputMethodEnabled=\"True\"", StringComparison.Ordinal), "Quick search should locally enable IME for Chinese file-name input.");
         Assert(xaml.Contains("Grid.ColumnSpan=\"2\"", StringComparison.Ordinal), "Quick search should float across the main window instead of living inside the thumbnail sidebar.");
         Assert(code.Contains("ShouldShowQuickSearchThumbnailResults", StringComparison.Ordinal), "Quick search should filter thumbnail results only when the sidebar is visible.");
-        Assert(code.Contains("if (matchingItems.Count == 0)", StringComparison.Ordinal), "A zero-result filename search should keep the current thumbnail sidebar instead of clearing it.");
-        Assert(code.IndexOf("if (matchingItems.Count == 0)", StringComparison.Ordinal)
-            < code.IndexOf("_thumbnailSearchItems = matchingItems;", StringComparison.Ordinal),
+        Assert(code.Contains("if (result.MatchingIndices.Count == 0)", StringComparison.Ordinal), "A zero-result filename search should keep the current thumbnail sidebar instead of clearing it.");
+        Assert(code.IndexOf("if (result.MatchingIndices.Count == 0)", StringComparison.Ordinal)
+            < code.IndexOf("_thumbnailSearchItems = new IndexedProjectionList", StringComparison.Ordinal),
             "Quick-search thumbnails should only replace the current sidebar after finding valid matches.");
         Assert(code.Contains("_thumbnailItemsNeedRefresh = true;", StringComparison.Ordinal), "Hidden thumbnail sidebar should defer creating thumbnail item models until it is shown again.");
+        Assert(code.Contains("new LazyIndexedList<ThumbnailItem>", StringComparison.Ordinal), "Large thumbnail catalogs should instantiate item models on demand.");
+        Assert(xaml.Contains("VirtualizingPanel.VirtualizationMode=\"Recycling\"", StringComparison.Ordinal), "Thumbnail containers should use recycling virtualization.");
         Assert(code.Contains("ShowQuickSearchOnStartupIfNeeded", StringComparison.Ordinal), "Main window should restore persisted quick-search visibility after startup loading.");
         Assert(code.Contains("private void ToggleQuickSearch()", StringComparison.Ordinal), "Quick-search shortcut should toggle an already visible overlay instead of appearing unresponsive.");
         Assert(code.Split("ToggleQuickSearch();", StringSplitOptions.None).Length >= 3, "Quick-search shortcut should use the same toggle path whether the overlay is visible or hidden.");
@@ -921,7 +1040,8 @@ internal static class Program
         Assert(code.Contains("ResetPersistedQuickSearchPosition();", StringComparison.Ordinal), "Closing quick search with its configured shortcut should reset the next opening position.");
         Assert(code.Contains("(Keyboard.Modifiers & ModifierKeys.Control) == 0", StringComparison.Ordinal), "Dragging quick search should require holding Ctrl.");
         Assert(code.Contains("_viewerSettings.QuickSearchOffsetX = offset.X;", StringComparison.Ordinal), "Dragging quick search should update its persisted horizontal offset.");
-        Assert(code.Contains("HideQuickSearch(rememberForStartup: false);", StringComparison.Ordinal), "Automatic hiding after a successful jump should not overwrite the startup preference.");
+        Assert(code.Contains("if (_viewerSettings.HideQuickSearchAfterJump)", StringComparison.Ordinal), "Quick search should only close after a successful jump when the user enables that setting.");
+        Assert(code.Contains("HideQuickSearch(rememberForStartup: false);", StringComparison.Ordinal), "Optional post-jump hiding should not overwrite the startup preference.");
         var quickSearchModeHandlerStart = code.IndexOf("private async void QuickSearchModeButton_Click", StringComparison.Ordinal);
         var quickSearchGoHandlerStart = code.IndexOf("private async void QuickSearchGoButton_Click", StringComparison.Ordinal);
         var quickSearchModeHandler = code[quickSearchModeHandlerStart..quickSearchGoHandlerStart];
@@ -1099,6 +1219,40 @@ internal static class Program
         File.Delete(first);
         var deleteResult = catalog.ApplyPathChanges([first], []);
         Assert(deleteResult.RemovedCount == 1 && catalog.Count == 1, "Incremental delete should remove only the affected catalog item.");
+    }
+
+    private static void AssertCatalogMetadataCache(string root)
+    {
+        var folder = Path.Combine(root, "test-output", "catalog-metadata-cache");
+        if (Directory.Exists(folder))
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+
+        Directory.CreateDirectory(folder);
+        var small = Path.Combine(folder, "small.png");
+        var medium = Path.Combine(folder, "medium.png");
+        var large = Path.Combine(folder, "large.png");
+        File.WriteAllBytes(small, new byte[10]);
+        File.WriteAllBytes(medium, new byte[20]);
+        File.WriteAllBytes(large, new byte[30]);
+
+        var catalog = new ImageCatalog
+        {
+            SortMode = ImageSortMode.FileSizeLargest,
+        };
+        catalog.LoadFromFolder(folder);
+        Assert(catalog.CachedMetadataCount == 3, "File-size sorting should cache one metadata snapshot per catalog item.");
+        Assert(Path.GetFileName(catalog.Paths[0]) == "large.png", "Metadata-backed sorting should order the largest file first.");
+
+        catalog.ResortKeepingCurrent();
+        Assert(catalog.CachedMetadataCount == 3, "Repeated sorting should reuse cached file metadata.");
+
+        File.WriteAllBytes(small, new byte[40]);
+        var update = catalog.ApplyPathChanges([], [small]);
+        Assert(update.UpdatedCount == 1, "Catalog metadata test should observe the changed file.");
+        Assert(Path.GetFileName(catalog.Paths[0]) == "small.png", "A changed file should invalidate its cached metadata before re-sorting.");
+        Assert(catalog.CachedMetadataCount == 3, "Metadata invalidation should refresh only the changed entry.");
     }
 
     private static void AssertFolderChangeMonitor(string root)

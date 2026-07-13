@@ -21,6 +21,10 @@ public sealed class ViewerSettings
 
     public const int DefaultDisplayPreviewCacheMegabytes = 192;
 
+    public const int AutomaticMainImageCacheCapMegabytes = 8192;
+
+    public const int AutomaticDisplayPreviewCacheCapMegabytes = 2048;
+
     public const int DefaultThumbnailDiskCacheMegabytes = 512;
 
     public bool ShowThumbnailSidebar { get; set; } = true;
@@ -30,6 +34,8 @@ public sealed class ViewerSettings
     public QuickSearchMode QuickSearchMode { get; set; } = global::Pixora.Services.QuickSearchMode.Index;
 
     public bool ShowQuickSearchOnStartup { get; set; }
+
+    public bool HideQuickSearchAfterJump { get; set; }
 
     public double QuickSearchOffsetX { get; set; }
 
@@ -74,6 +80,8 @@ public sealed class ViewerSettings
     public int MainImageCacheMegabytes { get; set; } = DefaultMainImageCacheMegabytes;
 
     public int DisplayPreviewCacheMegabytes { get; set; } = DefaultDisplayPreviewCacheMegabytes;
+
+    public bool UseAutomaticCacheSizing { get; set; } = true;
 
     public bool EnableLowMemoryProtection { get; set; } = true;
 

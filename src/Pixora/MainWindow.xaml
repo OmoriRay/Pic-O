@@ -453,13 +453,13 @@
                          Foreground="#F2F5F7"
                          Padding="8,4,4,4"
                          ScrollViewer.CanContentScroll="True"
+                         VirtualizingPanel.IsVirtualizing="True"
+                         VirtualizingPanel.VirtualizationMode="Recycling"
+                         VirtualizingPanel.ScrollUnit="Item"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                          ScrollViewer.VerticalScrollBarVisibility="Auto"
                          VirtualizingPanel.CacheLength="2"
-                         VirtualizingPanel.CacheLengthUnit="Page"
-                         VirtualizingPanel.IsVirtualizing="True"
-                         VirtualizingPanel.ScrollUnit="Item"
-                         VirtualizingPanel.VirtualizationMode="Recycling">
+                         VirtualizingPanel.CacheLengthUnit="Page">
                     <ListBox.Resources>
                         <Style x:Key="ThumbnailScrollBarButtonStyle" TargetType="{x:Type RepeatButton}">
                             <Setter Property="Focusable" Value="False" />
@@ -535,7 +535,7 @@
                     </ListBox.Resources>
                     <ListBox.ItemsPanel>
                         <ItemsPanelTemplate>
-                            <VirtualizingStackPanel />
+                            <VirtualizingStackPanel VirtualizationMode="Recycling" />
                         </ItemsPanelTemplate>
                     </ListBox.ItemsPanel>
                     <ListBox.ItemContainerStyle>
@@ -787,6 +787,10 @@
                             CornerRadius="21"
                             Opacity="0.78"
                             IsHitTestVisible="False">
+                        <Border.CacheMode>
+                            <BitmapCache RenderAtScale="1"
+                                         EnableClearType="False" />
+                        </Border.CacheMode>
                         <Border.Background>
                             <VisualBrush x:Name="QuickSearchBackdropBrush"
                                          Visual="{Binding ElementName=ViewerSurface}"

@@ -5,6 +5,7 @@ using System.IO;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 
 namespace Pixora;
 
@@ -13,6 +14,8 @@ public partial class BatchCompressWindow : Window
     private CancellationTokenSource? _runCts;
     private readonly BatchCompressionSettings _settings = BatchCompressionSettings.Load();
     private readonly List<string> _logLines = [];
+    private readonly ProgressUpdateBuffer<BatchCompressionProgress> _progressBuffer = new();
+    private readonly DispatcherTimer _progressUiTimer;
     private string? _lastRunLogPath;
     private bool _isRunning;
     private bool _isApplyingSettings;
@@ -22,6 +25,12 @@ public partial class BatchCompressWindow : Window
     public BatchCompressWindow(string? initialInputPath = null)
     {
         InitializeComponent();
+        _progressUiTimer = new DispatcherTimer(
+            TimeSpan.FromMilliseconds(75),
+            DispatcherPriority.Background,
+            ProgressUiTimer_Tick,
+            Dispatcher);
+        _progressUiTimer.Stop();
         ApplySavedWindowPlacement();
         ApplySavedSettings(initialInputPath);
         UpdateQualityState();
@@ -141,11 +150,14 @@ public partial class BatchCompressWindow : Window
         AddLog($"设置：格式 {FormatOptionName(options.Format)}，质量 {options.JpegQuality}，最大宽高 {options.MaxWidth} x {options.MaxHeight}，包含子目录 {FormatBoolean(options.IncludeSubfolders)}，覆盖已有 {FormatBoolean(options.OverwriteExisting)}");
 
         _runCts = new CancellationTokenSource();
-        var progress = new Progress<BatchCompressionProgress>(UpdateProgress);
+        _progressBuffer.Clear();
+        _progressUiTimer.Start();
+        IProgress<BatchCompressionProgress> progress = _progressBuffer;
 
         try
         {
             var preflight = await BatchImageCompressor.PreflightAsync(options, progress, _runCts.Token);
+            FlushProgressUpdates();
             var preflightSummary = FormatPreflightSummary(preflight);
             SummaryText.Text = preflightSummary;
             AddLog(preflightSummary);
@@ -169,6 +181,7 @@ public partial class BatchCompressWindow : Window
             StatusText.Text = "正在压缩...";
             ProgressBar.Value = 0;
             var result = await BatchImageCompressor.CompressAsync(options, progress, _runCts.Token);
+            FlushProgressUpdates();
             ProgressBar.Value = result.Total == 0 ? 0 : result.Total;
             StatusText.Text = HasCompletionIssues(result)
                 ? "批量压缩完成（有文件未压缩）"
@@ -183,12 +196,14 @@ public partial class BatchCompressWindow : Window
         }
         catch (OperationCanceledException)
         {
+            FlushProgressUpdates();
             StatusText.Text = "已取消";
             AddLog("任务已取消。");
             WriteRunLogToOutputFolder(options, StatusText.Text, SummaryText.Text);
         }
         catch (Exception ex)
         {
+            FlushProgressUpdates();
             StatusText.Text = "批量压缩失败";
             AddLog($"失败：{FriendlyException(ex)}");
             WriteRunLogToOutputFolder(options, StatusText.Text, FriendlyException(ex));
@@ -196,6 +211,8 @@ public partial class BatchCompressWindow : Window
         }
         finally
         {
+            _progressUiTimer.Stop();
+            _progressBuffer.Clear();
             _runCts?.Dispose();
             _runCts = null;
             SetRunning(false);
@@ -279,6 +296,24 @@ public partial class BatchCompressWindow : Window
         SaveCurrentSettings();
     }
 
+    private void ProgressUiTimer_Tick(object? sender, EventArgs e)
+    {
+        FlushProgressUpdates();
+    }
+
+    private void FlushProgressUpdates()
+    {
+        var updates = _progressBuffer.Drain();
+        if (updates.Count == 0)
+        {
+            return;
+        }
+
+        var progress = updates[^1];
+        UpdateProgress(progress);
+        AddLogs(updates.Select(static update => update.Message));
+    }
+
     private void UpdateProgress(BatchCompressionProgress progress)
     {
         ProgressBar.Maximum = Math.Max(1, progress.Total);
@@ -286,21 +321,31 @@ public partial class BatchCompressWindow : Window
         StatusText.Text = progress.Total == 0
             ? progress.Message
             : $"{progress.Completed}/{progress.Total}  {progress.Message}";
-        AddLog(progress.Message);
     }
 
     private void AddLog(string message)
     {
-        if (string.IsNullOrWhiteSpace(message))
+        AddLogs([message]);
+    }
+
+    private void AddLogs(IEnumerable<string> messages)
+    {
+        var added = false;
+        foreach (var message in messages)
         {
-            return;
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                continue;
+            }
+
+            _logCount++;
+            var line = $"{_logCount:0000}  {message}";
+            _logLines.Add(line);
+            LogListBox.Items.Add(line);
+            added = true;
         }
 
-        _logCount++;
-        var line = $"{_logCount:0000}  {message}";
-        _logLines.Add(line);
-        LogListBox.Items.Add(line);
-        if (LogListBox.Items.Count > 0)
+        if (added && LogListBox.Items.Count > 0)
         {
             LogListBox.ScrollIntoView(LogListBox.Items[^1]);
         }

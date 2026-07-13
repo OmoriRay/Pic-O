@@ -2,7 +2,6 @@ using Microsoft.VisualBasic.FileIO;
 using Microsoft.Win32;
 using Pixora.Models;
 using Pixora.Services;
-using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -95,15 +94,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly DispatcherTimer _idleFullResolutionTimer;
     private readonly DispatcherTimer _quickSearchDebounceTimer;
     private readonly DispatcherTimer _thumbnailScrollIdleTimer;
-    private ObservableCollection<ThumbnailRow> _thumbnailRows = [];
+    private VirtualizedRowCollection<ThumbnailItem> _thumbnailRows = VirtualizedRowCollection<ThumbnailItem>.Empty;
     private readonly Dictionary<string, BitmapSource> _thumbnailCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ThumbnailItem> _thumbnailItemByPath = new(StringComparer.OrdinalIgnoreCase);
     private readonly Queue<string> _thumbnailCacheOrder = new();
     private readonly HashSet<string> _queuedThumbnailPaths = new(StringComparer.OrdinalIgnoreCase);
-    private readonly SemaphoreSlim _thumbnailLoadSemaphore = new(2, 2);
+    private SemaphoreSlim _thumbnailLoadSemaphore = new(2, 2);
     private readonly object _thumbnailQueueLock = new();
-    private List<ThumbnailItem> _thumbnailItems = [];
-    private List<ThumbnailItem>? _thumbnailSearchItems;
+    private LazyIndexedList<ThumbnailItem> _thumbnailItems = LazyIndexedList<ThumbnailItem>.Empty;
+    private IndexedProjectionList<ThumbnailItem>? _thumbnailSearchItems;
 
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _thumbnailCts;
@@ -140,6 +139,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private int _animationFrameIndex;
     private int _thumbnailGeneration;
     private int _thumbnailViewportGeneration;
+    private int _quickSearchIndexGeneration = -1;
+    private int _navigationDirection;
+    private int _mainPreloadForwardRadius = 3;
+    private int _mainPreloadOppositeRadius = 1;
+    private int _thumbnailLoadConcurrency = 2;
     private int _catalogCompletionGeneration;
     private int _folderLoadGeneration;
     private int _scheduledFitGeneration;
@@ -1049,14 +1053,36 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void ApplyRuntimeViewerSettings()
     {
-        _memoryCacheCoordinator.ApplyConfiguredBudgets(
-            NormalizeMegabytes(_viewerSettings.MainImageCacheMegabytes, ViewerSettings.DefaultMainImageCacheMegabytes),
-            NormalizeMegabytes(_viewerSettings.DisplayPreviewCacheMegabytes, ViewerSettings.DefaultDisplayPreviewCacheMegabytes));
+        var mainImageCacheMegabytes = _viewerSettings.UseAutomaticCacheSizing
+            ? ViewerSettings.AutomaticMainImageCacheCapMegabytes
+            : NormalizeMegabytes(_viewerSettings.MainImageCacheMegabytes, ViewerSettings.DefaultMainImageCacheMegabytes);
+        var displayPreviewCacheMegabytes = _viewerSettings.UseAutomaticCacheSizing
+            ? ViewerSettings.AutomaticDisplayPreviewCacheCapMegabytes
+            : NormalizeMegabytes(_viewerSettings.DisplayPreviewCacheMegabytes, ViewerSettings.DefaultDisplayPreviewCacheMegabytes);
+        var performanceProfile = _memoryCacheCoordinator.ApplyConfiguredPerformance(
+            mainImageCacheMegabytes,
+            displayPreviewCacheMegabytes,
+            _viewerSettings.UseAutomaticCacheSizing);
+        _mainPreloadForwardRadius = performanceProfile.MainPreloadForwardRadius;
+        _mainPreloadOppositeRadius = performanceProfile.MainPreloadOppositeRadius;
+        ConfigureThumbnailLoadConcurrency(performanceProfile.ThumbnailLoadConcurrency);
         _thumbnailDiskCache.SetMaxMegabytes(NormalizeMegabytes(
             _viewerSettings.ThumbnailDiskCacheMegabytes,
             ViewerSettings.DefaultThumbnailDiskCacheMegabytes));
         _ = _thumbnailDiskCache.TrimToBytesAsync(_thumbnailDiskCache.MaxBytes);
         ApplyLowMemoryProtectionIfNeeded();
+    }
+
+    private void ConfigureThumbnailLoadConcurrency(int concurrency)
+    {
+        concurrency = Math.Clamp(concurrency, 1, 6);
+        if (concurrency == _thumbnailLoadConcurrency)
+        {
+            return;
+        }
+
+        _thumbnailLoadConcurrency = concurrency;
+        _thumbnailLoadSemaphore = new SemaphoreSlim(concurrency, concurrency);
     }
 
     private static int NormalizeMegabytes(int value, int fallback)
@@ -1138,7 +1164,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        var paths = _catalog.GetNeighborPaths(radius: 3).ToList();
+        var paths = _catalog.GetDirectionalNeighborPaths(
+            _navigationDirection,
+            forwardRadius: _mainPreloadForwardRadius,
+            oppositeRadius: _mainPreloadOppositeRadius).ToList();
         if (paths.Count == 0)
         {
             return;
@@ -1352,6 +1381,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         if (_catalog.MoveNext())
         {
+            _navigationDirection = 1;
             PrepareForNavigation();
             await LoadCurrentAsync();
         }
@@ -1361,6 +1391,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         if (_catalog.MovePrevious())
         {
+            _navigationDirection = -1;
             PrepareForNavigation();
             await LoadCurrentAsync();
         }
@@ -2460,17 +2491,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        var matchingItems = result.MatchingIndices
-            .Where(index => (uint)index < (uint)_thumbnailItems.Count)
-            .Select(index => _thumbnailItems[index])
-            .ToList();
-        if (matchingItems.Count == 0)
+        if (result.MatchingIndices.Count == 0)
         {
             // 搜索框已经给出“没有找到”的反馈，右侧保留上一次有效内容和滚动位置。
             return;
         }
 
-        _thumbnailSearchItems = matchingItems;
+        _thumbnailSearchItems = new IndexedProjectionList<ThumbnailItem>(
+            _thumbnailItems,
+            result.MatchingIndices);
         _thumbnailScrollViewer = null;
         _thumbnailVisibleStartIndex = 0;
         _thumbnailVisibleEndIndex = -1;
@@ -2572,11 +2601,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         CancelQuickSearchQuery();
         var cts = new CancellationTokenSource();
         _quickSearchCts = cts;
-        var previousResult = _quickSearchResult;
+        var catalogGeneration = _thumbnailGeneration;
+        var catalogPaths = _catalog.Paths;
+        var needsIndexReset = _quickSearchIndexGeneration != catalogGeneration;
+        var previousResult = needsIndexReset ? null : _quickSearchResult;
         try
         {
             var result = await Task.Run(
-                () => _quickSearchIndex.Search(query, previousResult, cts.Token),
+                () =>
+                {
+                    return needsIndexReset
+                        ? _quickSearchIndex.ResetAndSearch(catalogPaths, query, cts.Token)
+                        : _quickSearchIndex.Search(query, previousResult, cts.Token);
+                },
                 cts.Token);
             if (cts.IsCancellationRequested
                 || !ReferenceEquals(_quickSearchCts, cts)
@@ -2586,6 +2623,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 return;
             }
 
+            _quickSearchIndexGeneration = catalogGeneration;
             _quickSearchResult = result;
             UpdateQuickSearchResult();
             ApplyQuickSearchThumbnailFilter();
@@ -2643,10 +2681,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        HideQuickSearch(rememberForStartup: false);
+        var previousIndex = _catalog.Index;
         if (!_catalog.MoveToIndex(targetIndex))
         {
             return;
+        }
+
+        _navigationDirection = Math.Sign(targetIndex - previousIndex);
+
+        if (_viewerSettings.HideQuickSearchAfterJump)
+        {
+            HideQuickSearch(rememberForStartup: false);
         }
 
         PrepareForNavigation();
@@ -3708,7 +3753,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         builder.AppendLine($"主图缓存数量：{_cache.Count:N0}");
         builder.AppendLine($"显示预览缓存上限：{FormatFileSize(cacheSnapshot.PreviewBudgetBytes)}");
         builder.AppendLine($"显示预览缓存估算占用：{FormatFileSize(cacheSnapshot.PreviewEstimatedBytes)}");
+        builder.AppendLine($"内存缓存自动调整：{FormatOnOff(_viewerSettings.UseAutomaticCacheSizing)}");
+        builder.AppendLine($"邻图预加载：前向 {_mainPreloadForwardRadius:N0}，反向 {_mainPreloadOppositeRadius:N0}");
+        builder.AppendLine($"缩略图加载并发：{_thumbnailLoadConcurrency:N0}");
         builder.AppendLine($"缩略图内存缓存数量：{_thumbnailCache.Count:N0}/{MaxThumbnailCacheItems:N0}");
+        builder.AppendLine($"已创建缩略图模型：{_thumbnailItems.CreatedCount:N0}/{_thumbnailItems.Count:N0}");
         builder.AppendLine($"缩略图磁盘缓存：{FormatOnOff(_viewerSettings.UseThumbnailDiskCache)}");
         builder.AppendLine($"缩略图磁盘缓存上限：{FormatFileSize(_thumbnailDiskCache.MaxBytes)}");
         builder.AppendLine($"缩略图磁盘缓存占用：{FormatFileSize(thumbnailDiskCacheStatistics.TotalBytes)}（{thumbnailDiskCacheStatistics.FileCount:N0} 项）");
@@ -3718,6 +3767,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         builder.AppendLine($"GC 当前内存：{FormatFileSize(GC.GetTotalMemory(forceFullCollection: false))}");
         builder.AppendLine($"GC 内存负载：{FormatFileSize(memoryInfo.MemoryLoadBytes)}");
         builder.AppendLine($"GC 高内存阈值：{FormatFileSize(memoryInfo.HighMemoryLoadThresholdBytes)}");
+        builder.AppendLine($"运行环境可用内存：{FormatFileSize(cacheSnapshot.TotalAvailableMemoryBytes)}");
         builder.AppendLine($"进程工作集：{FormatFileSize(process.WorkingSet64)}");
         builder.AppendLine($"进程私有内存：{FormatFileSize(process.PrivateMemorySize64)}");
 
@@ -4751,10 +4801,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private async Task NavigateToThumbnailAsync(ThumbnailItem item)
     {
+        var previousIndex = _catalog.Index;
         if (!_catalog.MoveTo(item.Path))
         {
             return;
         }
+
+        _navigationDirection = Math.Sign(item.Index - previousIndex);
 
         PrepareForNavigation();
         await LoadCurrentAsync();
@@ -4774,9 +4827,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void RefreshThumbnailItems()
     {
+        _navigationDirection = 0;
         CancelQuickSearchQuery();
         _quickSearchResult = null;
-        _quickSearchIndex.Reset(_catalog.Paths);
         _thumbnailScrollIdleTimer.Stop();
         _isThumbnailScrollActive = false;
         _thumbnailViewportCts?.Cancel();
@@ -4801,9 +4854,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _thumbnailItemsNeedRefresh = true;
             _thumbnailRowsNeedRefresh = false;
             _thumbnailSearchItems = null;
-            _thumbnailItems = [];
+            _thumbnailItems = LazyIndexedList<ThumbnailItem>.Empty;
             _thumbnailItemByPath.Clear();
-            _thumbnailRows = [];
+            _thumbnailRows = VirtualizedRowCollection<ThumbnailItem>.Empty;
             ThumbnailList.ItemsSource = _thumbnailRows;
             _selectedThumbnailItem = null;
             _thumbnailVisibleStartIndex = 0;
@@ -4822,13 +4875,29 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _thumbnailVisibleStartIndex = 0;
         _thumbnailVisibleEndIndex = -1;
         _thumbnailItemByPath.Clear();
-        _thumbnailItems = _catalog.Paths
-            .Select((path, index) => new ThumbnailItem(path, index, _favorites.IsFavorite(path)))
-            .ToList();
+        _thumbnailItems = new LazyIndexedList<ThumbnailItem>(
+            _catalog.Paths.Count,
+            index =>
+            {
+                var path = _catalog.Paths[index];
+                var item = new ThumbnailItem(path, index, _favorites.IsFavorite(path));
+                _thumbnailItemByPath[path] = item;
+                return item;
+            },
+            maxCachedItems: 2048,
+            canEvict: static item => !item.IsSelected && !item.IsLoading,
+            onEvicted: item =>
+            {
+                if (_thumbnailItemByPath.TryGetValue(item.Path, out var current)
+                    && ReferenceEquals(current, item))
+                {
+                    _thumbnailItemByPath.Remove(item.Path);
+                }
+            });
 
-        foreach (var item in _thumbnailItems)
+        if (_catalog.Index >= 0 && _catalog.Index < _thumbnailItems.Count)
         {
-            _thumbnailItemByPath[item.Path] = item;
+            _ = _thumbnailItems[_catalog.Index];
         }
 
         if (ShouldShowQuickSearchThumbnailResults())
@@ -4853,27 +4922,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         var displayItems = GetDisplayedThumbnailItems();
         var columns = GetThumbnailColumnCount();
-        var rows = new List<ThumbnailRow>((displayItems.Count + columns - 1) / columns);
-        for (var index = 0; index < displayItems.Count; index += columns)
-        {
-            var count = Math.Min(columns, displayItems.Count - index);
-            var rowItems = new List<ThumbnailItem>(count);
-            for (var offset = 0; offset < count; offset++)
-            {
-                rowItems.Add(displayItems[index + offset]);
-            }
-
-            rows.Add(new ThumbnailRow(rowItems));
-        }
-
-        _thumbnailRows = new ObservableCollection<ThumbnailRow>(rows);
+        _thumbnailRows = new VirtualizedRowCollection<ThumbnailItem>(displayItems, columns);
         ThumbnailList.ItemsSource = _thumbnailRows;
         _thumbnailRowsNeedRefresh = false;
     }
 
     private IReadOnlyList<ThumbnailItem> GetDisplayedThumbnailItems()
     {
-        return _thumbnailSearchItems ?? _thumbnailItems;
+        return _thumbnailSearchItems is { } searchItems
+            ? searchItems
+            : _thumbnailItems;
     }
 
     private int GetThumbnailColumnCount()
@@ -5011,7 +5069,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 return;
             }
 
-            await _thumbnailLoadSemaphore.WaitAsync(cancellationToken);
+            var thumbnailLoadSemaphore = _thumbnailLoadSemaphore;
+            await thumbnailLoadSemaphore.WaitAsync(cancellationToken);
             BitmapSource thumbnail;
             try
             {
@@ -5024,7 +5083,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
             finally
             {
-                _thumbnailLoadSemaphore.Release();
+                thumbnailLoadSemaphore.Release();
             }
 
             if (cancellationToken.IsCancellationRequested
@@ -5166,7 +5225,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var displayItems = GetDisplayedThumbnailItems();
         var displayIndex = _thumbnailSearchItems is null
             ? _catalog.Index
-            : _thumbnailSearchItems.IndexOf(item);
+            : _thumbnailSearchItems.IndexOfSourceIndex(_catalog.Index);
         if (displayIndex < 0)
         {
             return;
@@ -7050,11 +7109,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
-    }
-
-    private sealed class ThumbnailRow(IReadOnlyList<ThumbnailItem> items)
-    {
-        public IReadOnlyList<ThumbnailItem> Items { get; } = items;
     }
 
 }

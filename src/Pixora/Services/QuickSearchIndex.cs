@@ -9,27 +9,70 @@ public sealed record QuickSearchIndexResult(string Query, IReadOnlyList<int> Mat
 
 public sealed class QuickSearchIndex
 {
-    private Entry[] _entries = [];
+    private readonly object _syncRoot = new();
+    private IReadOnlyList<string> _paths = [];
+    private Entry?[] _entries = [];
+    private int _initializedEntryCount;
 
-    public int Count => _entries.Length;
+    public int Count
+    {
+        get
+        {
+            lock (_syncRoot)
+            {
+                return _entries.Length;
+            }
+        }
+    }
 
-    public void Reset(IReadOnlyList<string> paths)
+    public int InitializedEntryCount
+    {
+        get
+        {
+            lock (_syncRoot)
+            {
+                return _initializedEntryCount;
+            }
+        }
+    }
+
+    public void Reset(IReadOnlyList<string> paths, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(paths);
-        var entries = new Entry[paths.Count];
-        for (var index = 0; index < paths.Count; index++)
+        lock (_syncRoot)
         {
-            var path = paths[index];
-            entries[index] = new Entry(Path.GetFileName(path));
+            ResetCore(paths, cancellationToken);
         }
+    }
 
-        _entries = entries;
+    public QuickSearchIndexResult ResetAndSearch(
+        IReadOnlyList<string> paths,
+        string query,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+        lock (_syncRoot)
+        {
+            ResetCore(paths, cancellationToken);
+            return SearchCore(query, previousResult: null, cancellationToken);
+        }
     }
 
     public QuickSearchIndexResult Search(
         string query,
         QuickSearchIndexResult? previousResult = null,
         CancellationToken cancellationToken = default)
+    {
+        lock (_syncRoot)
+        {
+            return SearchCore(query, previousResult, cancellationToken);
+        }
+    }
+
+    private QuickSearchIndexResult SearchCore(
+        string query,
+        QuickSearchIndexResult? previousResult,
+        CancellationToken cancellationToken)
     {
         var keyword = query.Trim();
         if (keyword.Length == 0)
@@ -48,7 +91,7 @@ public sealed class QuickSearchIndex
             foreach (var index in previousMatches)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if ((uint)index < (uint)_entries.Length && _entries[index].Matches(keyword))
+                if ((uint)index < (uint)_entries.Length && GetEntry(index).Matches(keyword))
                 {
                     matches.Add(index);
                 }
@@ -59,7 +102,7 @@ public sealed class QuickSearchIndex
             for (var index = 0; index < _entries.Length; index++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (_entries[index].Matches(keyword))
+                if (GetEntry(index).Matches(keyword))
                 {
                     matches.Add(index);
                 }
@@ -71,7 +114,32 @@ public sealed class QuickSearchIndex
 
     public string? GetFileName(int index)
     {
-        return (uint)index < (uint)_entries.Length ? _entries[index].FileName : null;
+        lock (_syncRoot)
+        {
+            return (uint)index < (uint)_entries.Length ? GetEntry(index).FileName : null;
+        }
+    }
+
+    private void ResetCore(IReadOnlyList<string> paths, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _paths = paths;
+        _entries = new Entry?[paths.Count];
+        _initializedEntryCount = 0;
+    }
+
+    private Entry GetEntry(int index)
+    {
+        var entry = _entries[index];
+        if (entry is not null)
+        {
+            return entry;
+        }
+
+        entry = new Entry(Path.GetFileName(_paths[index]));
+        _entries[index] = entry;
+        _initializedEntryCount++;
+        return entry;
     }
 
     private sealed record Entry(string FileName)

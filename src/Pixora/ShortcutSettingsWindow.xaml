@@ -270,6 +270,10 @@
                                           Content="启动时自动显示快速搜索"
                                           Margin="0,16,0,0"
                                           Foreground="#DCE4EC" />
+                                <CheckBox x:Name="HideQuickSearchAfterJumpCheckBox"
+                                          Content="跳转成功后自动收起快速搜索"
+                                          Margin="0,16,0,0"
+                                          Foreground="#DCE4EC" />
                                 <CheckBox x:Name="RememberMainWindowPlacementCheckBox"
                                           Content="记住主窗口大小、位置和最大化状态"
                                           Margin="0,16,0,0"
@@ -307,30 +311,70 @@
                                            Foreground="#F2F5F7"
                                            FontSize="15"
                                            FontWeight="SemiBold" />
-                                <TextBlock Text="原图缓存"
+                                <TextBlock Text="缓存模式"
                                            Foreground="#AEB8C4"
                                            FontSize="12"
                                            Margin="0,14,0,6" />
-                                <ComboBox x:Name="MainImageCacheComboBox"
+                                <ComboBox x:Name="CacheSizingModeComboBox"
                                           HorizontalAlignment="Stretch"
-                                          SelectedValuePath="Tag">
-                                    <ComboBoxItem Content="512 MB" Tag="512" />
-                                    <ComboBoxItem Content="768 MB" Tag="768" />
-                                    <ComboBoxItem Content="1 GB" Tag="1024" />
-                                    <ComboBoxItem Content="2 GB" Tag="2048" />
+                                          SelectedValuePath="Tag"
+                                          AutomationProperties.Name="内存缓存模式"
+                                          SelectionChanged="CacheSizingModeComboBox_SelectionChanged">
+                                    <ComboBoxItem Content="自动（推荐）" Tag="Automatic" />
+                                    <ComboBoxItem Content="手动" Tag="Manual" />
                                 </ComboBox>
-                                <TextBlock Text="预览缓存"
-                                           Foreground="#AEB8C4"
-                                           FontSize="12"
-                                           Margin="0,12,0,6" />
-                                <ComboBox x:Name="DisplayPreviewCacheComboBox"
-                                          HorizontalAlignment="Stretch"
-                                          SelectedValuePath="Tag">
-                                    <ComboBoxItem Content="128 MB" Tag="128" />
-                                    <ComboBoxItem Content="192 MB" Tag="192" />
-                                    <ComboBoxItem Content="256 MB" Tag="256" />
-                                    <ComboBoxItem Content="512 MB" Tag="512" />
-                                </ComboBox>
+                                <Border x:Name="AutomaticCacheSummaryPanel"
+                                        Margin="0,10,0,0"
+                                        Padding="12,10"
+                                        Background="#142733"
+                                        BorderBrush="#315B70"
+                                        BorderThickness="1"
+                                        CornerRadius="7">
+                                    <StackPanel>
+                                        <TextBlock Text="已根据本机硬件自动配置"
+                                                   Foreground="#77CFFC"
+                                                   FontSize="12"
+                                                   FontWeight="SemiBold" />
+                                        <TextBlock x:Name="AutomaticCacheSummaryText"
+                                                   Margin="0,4,0,0"
+                                                   Foreground="#C8D5DE"
+                                                   FontSize="11"
+                                                   AutomationProperties.Name="当前自动缓存配置"
+                                                   AutomationProperties.LiveSetting="Polite"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Border>
+                                <StackPanel x:Name="ManualCacheSettingsPanel"
+                                            Margin="0,2,0,0">
+                                    <TextBlock Text="手动原图缓存"
+                                               Foreground="#AEB8C4"
+                                               FontSize="12"
+                                               Margin="0,12,0,6" />
+                                    <ComboBox x:Name="MainImageCacheComboBox"
+                                              HorizontalAlignment="Stretch"
+                                              SelectedValuePath="Tag">
+                                        <ComboBoxItem Content="512 MB" Tag="512" />
+                                        <ComboBoxItem Content="768 MB" Tag="768" />
+                                        <ComboBoxItem Content="1 GB" Tag="1024" />
+                                        <ComboBoxItem Content="2 GB" Tag="2048" />
+                                        <ComboBoxItem Content="4 GB" Tag="4096" />
+                                        <ComboBoxItem Content="8 GB" Tag="8192" />
+                                    </ComboBox>
+                                    <TextBlock Text="手动预览缓存"
+                                               Foreground="#AEB8C4"
+                                               FontSize="12"
+                                               Margin="0,12,0,6" />
+                                    <ComboBox x:Name="DisplayPreviewCacheComboBox"
+                                              HorizontalAlignment="Stretch"
+                                              SelectedValuePath="Tag">
+                                        <ComboBoxItem Content="128 MB" Tag="128" />
+                                        <ComboBoxItem Content="192 MB" Tag="192" />
+                                        <ComboBoxItem Content="256 MB" Tag="256" />
+                                        <ComboBoxItem Content="512 MB" Tag="512" />
+                                        <ComboBoxItem Content="1 GB" Tag="1024" />
+                                        <ComboBoxItem Content="2 GB" Tag="2048" />
+                                    </ComboBox>
+                                </StackPanel>
                                 <CheckBox x:Name="LowMemoryProtectionCheckBox"
                                           Content="低内存时自动减少后台加载和缓存"
                                           Margin="0,16,0,0"

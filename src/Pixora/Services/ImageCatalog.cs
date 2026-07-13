@@ -17,9 +17,12 @@ public sealed record ImageCatalogMutationResult(
 public sealed class ImageCatalog
 {
     private readonly WindowsLogicalStringComparer _windowsLogicalStringComparer = new();
+    private readonly Dictionary<string, FileMetadata> _fileMetadata = new(StringComparer.OrdinalIgnoreCase);
     private List<string> _files = [];
 
     public int Count => _files.Count;
+
+    public int CachedMetadataCount => _fileMetadata.Count;
 
     public IReadOnlyList<string> Paths => _files;
 
@@ -70,6 +73,7 @@ public sealed class ImageCatalog
 
     public void LoadFromFile(string path, CancellationToken cancellationToken, IProgress<int>? progress)
     {
+        _fileMetadata.Clear();
         var fullPath = Path.GetFullPath(path);
         var directory = Path.GetDirectoryName(fullPath);
         if (string.IsNullOrWhiteSpace(directory))
@@ -100,6 +104,7 @@ public sealed class ImageCatalog
 
     public void LoadSingleFile(string path)
     {
+        _fileMetadata.Clear();
         var fullPath = Path.GetFullPath(path);
         _files = [fullPath];
         Index = 0;
@@ -119,6 +124,7 @@ public sealed class ImageCatalog
 
     public void LoadFromFolder(string folder, CancellationToken cancellationToken, IProgress<int>? progress)
     {
+        _fileMetadata.Clear();
         var fullFolder = Path.GetFullPath(folder);
         _files = SortPaths(EnumerateSupportedMediaFiles(fullFolder, cancellationToken, progress));
         cancellationToken.ThrowIfCancellationRequested();
@@ -130,6 +136,7 @@ public sealed class ImageCatalog
 
     public void LoadFromPaths(IEnumerable<string> paths, string? preferredPath = null)
     {
+        _fileMetadata.Clear();
         var distinctPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var path in paths)
         {
@@ -175,6 +182,11 @@ public sealed class ImageCatalog
 
         SortMode = source.SortMode;
         _files = source._files.ToList();
+        _fileMetadata.Clear();
+        foreach (var pair in source._fileMetadata)
+        {
+            _fileMetadata[pair.Key] = pair.Value;
+        }
         Index = source.Index;
         SourceFolder = source.SourceFolder;
         IsSingleFileCatalog = source.IsSingleFileCatalog;
@@ -262,6 +274,7 @@ public sealed class ImageCatalog
 
         var currentPath = CurrentPath;
         _files.RemoveAt(removedIndex);
+        _fileMetadata.Remove(fullPath);
         if (_files.Count == 0)
         {
             Index = -1;
@@ -296,6 +309,7 @@ public sealed class ImageCatalog
         }
 
         var currentPath = CurrentPath;
+        _fileMetadata.Remove(fullPath);
         if (!_files.Contains(fullPath, StringComparer.OrdinalIgnoreCase))
         {
             _files.Add(fullPath);
@@ -325,6 +339,10 @@ public sealed class ImageCatalog
         var previousIndex = Index;
         var removed = NormalizePathSet(removedPaths);
         var removedCount = _files.RemoveAll(path => removed.Contains(path));
+        foreach (var removedPath in removed)
+        {
+            _fileMetadata.Remove(removedPath);
+        }
         var existing = new HashSet<string>(_files, StringComparer.OrdinalIgnoreCase);
         var addedCount = 0;
         var updatedCount = 0;
@@ -335,6 +353,8 @@ public sealed class ImageCatalog
             {
                 continue;
             }
+
+            _fileMetadata.Remove(fullPath);
 
             if (existing.Add(fullPath))
             {
@@ -401,6 +421,45 @@ public sealed class ImageCatalog
         return result.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
+    public IReadOnlyList<string> GetDirectionalNeighborPaths(
+        int direction,
+        int forwardRadius = 3,
+        int oppositeRadius = 1)
+    {
+        if (_files.Count <= 1 || Index < 0 || Index >= _files.Count)
+        {
+            return [];
+        }
+
+        if (direction == 0)
+        {
+            return GetNeighborPaths(forwardRadius);
+        }
+
+        var normalizedDirection = Math.Sign(direction);
+        var result = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var distance = 1; distance <= Math.Max(0, forwardRadius); distance++)
+        {
+            var path = _files[WrapIndex(Index + (distance * normalizedDirection), _files.Count)];
+            if (seen.Add(path))
+            {
+                result.Add(path);
+            }
+        }
+
+        for (var distance = 1; distance <= Math.Max(0, oppositeRadius); distance++)
+        {
+            var path = _files[WrapIndex(Index - (distance * normalizedDirection), _files.Count)];
+            if (seen.Add(path))
+            {
+                result.Add(path);
+            }
+        }
+
+        return result;
+    }
+
     public string? RemoveCurrent()
     {
         if (Index < 0 || Index >= _files.Count)
@@ -410,6 +469,7 @@ public sealed class ImageCatalog
 
         var removed = _files[Index];
         _files.RemoveAt(Index);
+        _fileMetadata.Remove(removed);
 
         if (_files.Count == 0)
         {
@@ -505,22 +565,22 @@ public sealed class ImageCatalog
                 .ThenByDescending(static path => path, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
             ImageSortMode.LastWriteTimeNewest => paths
-                .OrderByDescending(GetLastWriteTimeUtc)
+                .OrderByDescending(path => GetFileMetadata(path).LastWriteTimeUtc)
                 .ThenBy(GetSortName, _windowsLogicalStringComparer)
                 .ThenBy(static path => path, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
             ImageSortMode.LastWriteTimeOldest => paths
-                .OrderBy(GetLastWriteTimeUtc)
+                .OrderBy(path => GetFileMetadata(path).LastWriteTimeUtc)
                 .ThenBy(GetSortName, _windowsLogicalStringComparer)
                 .ThenBy(static path => path, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
             ImageSortMode.FileSizeLargest => paths
-                .OrderByDescending(GetFileSize)
+                .OrderByDescending(path => GetFileMetadata(path).Length)
                 .ThenBy(GetSortName, _windowsLogicalStringComparer)
                 .ThenBy(static path => path, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
             ImageSortMode.FileSizeSmallest => paths
-                .OrderBy(GetFileSize)
+                .OrderBy(path => GetFileMetadata(path).Length)
                 .ThenBy(GetSortName, _windowsLogicalStringComparer)
                 .ThenBy(static path => path, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
@@ -531,29 +591,29 @@ public sealed class ImageCatalog
         };
     }
 
-    private static DateTime GetLastWriteTimeUtc(string path)
+    private FileMetadata GetFileMetadata(string path)
     {
+        if (_fileMetadata.TryGetValue(path, out var cached))
+        {
+            return cached;
+        }
+
         try
         {
-            return File.GetLastWriteTimeUtc(path);
+            var info = new FileInfo(path);
+            var metadata = new FileMetadata(info.Length, info.LastWriteTimeUtc);
+            _fileMetadata[path] = metadata;
+            return metadata;
         }
         catch
         {
-            return DateTime.MinValue;
+            var metadata = new FileMetadata(0, DateTime.MinValue);
+            _fileMetadata[path] = metadata;
+            return metadata;
         }
     }
 
-    private static long GetFileSize(string path)
-    {
-        try
-        {
-            return new FileInfo(path).Length;
-        }
-        catch
-        {
-            return 0;
-        }
-    }
+    private readonly record struct FileMetadata(long Length, DateTime LastWriteTimeUtc);
 
     private static IEnumerable<string> EnumerateSupportedMediaFiles(
         string folder,

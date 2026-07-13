@@ -42,6 +42,7 @@ public partial class ShortcutSettingsWindow : Window
         UseDoubleThumbnailColumnsCheckBox.IsChecked = viewerSettings.UseDoubleThumbnailColumns;
         QuickSearchModeComboBox.SelectedValue = viewerSettings.QuickSearchMode.ToString();
         ShowQuickSearchOnStartupCheckBox.IsChecked = viewerSettings.ShowQuickSearchOnStartup;
+        HideQuickSearchAfterJumpCheckBox.IsChecked = viewerSettings.HideQuickSearchAfterJump;
         RememberMainWindowPlacementCheckBox.IsChecked = viewerSettings.RememberMainWindowPlacement;
         StartMainWindowMaximizedCheckBox.IsChecked = viewerSettings.StartMainWindowMaximized;
         ShowAnimationControlsCheckBox.IsChecked = viewerSettings.ShowAnimationControls;
@@ -49,6 +50,8 @@ public partial class ShortcutSettingsWindow : Window
         LoadFullResolutionWhenIdleCheckBox.IsChecked = viewerSettings.LoadFullResolutionWhenIdle;
         SelectComboBoxValue(MainImageCacheComboBox, viewerSettings.MainImageCacheMegabytes, ViewerSettings.DefaultMainImageCacheMegabytes);
         SelectComboBoxValue(DisplayPreviewCacheComboBox, viewerSettings.DisplayPreviewCacheMegabytes, ViewerSettings.DefaultDisplayPreviewCacheMegabytes);
+        CacheSizingModeComboBox.SelectedValue = viewerSettings.UseAutomaticCacheSizing ? "Automatic" : "Manual";
+        UpdateCacheSizingModeUi();
         LowMemoryProtectionCheckBox.IsChecked = viewerSettings.EnableLowMemoryProtection;
         ThumbnailDiskCacheCheckBox.IsChecked = viewerSettings.UseThumbnailDiskCache;
         IncludePrivatePathsInDiagnosticsCheckBox.IsChecked = viewerSettings.IncludePrivatePathsInDiagnostics;
@@ -173,6 +176,49 @@ public partial class ShortcutSettingsWindow : Window
         ApplySettingsSearchFilter();
     }
 
+    private void CacheSizingModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateCacheSizingModeUi();
+    }
+
+    private void UpdateCacheSizingModeUi()
+    {
+        if (ManualCacheSettingsPanel is null
+            || AutomaticCacheSummaryPanel is null
+            || AutomaticCacheSummaryText is null)
+        {
+            return;
+        }
+
+        var automatic = IsAutomaticCacheSizingSelected();
+        ManualCacheSettingsPanel.IsEnabled = !automatic;
+        ManualCacheSettingsPanel.Opacity = automatic ? 0.48 : 1;
+        AutomaticCacheSummaryPanel.Visibility = automatic ? Visibility.Visible : Visibility.Collapsed;
+        if (!automatic)
+        {
+            return;
+        }
+
+        var memoryInfo = GC.GetGCMemoryInfo();
+        var profile = MemoryCacheCoordinator.ResolvePerformanceProfile(
+            ViewerSettings.AutomaticMainImageCacheCapMegabytes,
+            ViewerSettings.AutomaticDisplayPreviewCacheCapMegabytes,
+            useAutomaticSizing: true,
+            memoryInfo.TotalAvailableMemoryBytes,
+            Environment.ProcessorCount);
+        AutomaticCacheSummaryText.Text =
+            $"当前预算：原图 {FormatMegabytes(profile.CacheBudgets.MainImageMegabytes)} · 预览 {FormatMegabytes(profile.CacheBudgets.PreviewMegabytes)}\n"
+            + $"预加载：前向 {profile.MainPreloadForwardRadius} / 反向 {profile.MainPreloadOppositeRadius} · 缩略图并发 {profile.ThumbnailLoadConcurrency}";
+    }
+
+    private bool IsAutomaticCacheSizingSelected()
+    {
+        return string.Equals(
+            CacheSizingModeComboBox?.SelectedValue?.ToString(),
+            "Automatic",
+            StringComparison.Ordinal);
+    }
+
     private void SettingsSearchTextBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         if (SettingsSearchPlaceholderText is null)
@@ -210,7 +256,7 @@ public partial class ShortcutSettingsWindow : Window
         SetSettingsSectionVisibility(
             PerformanceSettingsSection,
             query,
-            "性能 缓存 内存 原图 预览 缩略图 磁盘 清理 容量");
+            "性能 缓存 内存 原图 预览 缩略图 磁盘 清理 容量 自动 推荐 手动 预算 预加载 并发");
         SetSettingsSectionVisibility(
             DiagnosticsSettingsSection,
             query,
@@ -463,6 +509,7 @@ public partial class ShortcutSettingsWindow : Window
             _viewerSettings.UseDoubleThumbnailColumns = UseDoubleThumbnailColumnsCheckBox.IsChecked == true;
             _viewerSettings.QuickSearchMode = GetSelectedQuickSearchMode();
             _viewerSettings.ShowQuickSearchOnStartup = ShowQuickSearchOnStartupCheckBox.IsChecked == true;
+            _viewerSettings.HideQuickSearchAfterJump = HideQuickSearchAfterJumpCheckBox.IsChecked == true;
             _viewerSettings.RememberMainWindowPlacement = RememberMainWindowPlacementCheckBox.IsChecked == true;
             _viewerSettings.StartMainWindowMaximized = StartMainWindowMaximizedCheckBox.IsChecked == true;
             _viewerSettings.ShowAnimationControls = ShowAnimationControlsCheckBox.IsChecked == true;
@@ -470,6 +517,7 @@ public partial class ShortcutSettingsWindow : Window
             _viewerSettings.LoadFullResolutionWhenIdle = LoadFullResolutionWhenIdleCheckBox.IsChecked == true;
             _viewerSettings.MainImageCacheMegabytes = GetSelectedMegabytes(MainImageCacheComboBox, ViewerSettings.DefaultMainImageCacheMegabytes);
             _viewerSettings.DisplayPreviewCacheMegabytes = GetSelectedMegabytes(DisplayPreviewCacheComboBox, ViewerSettings.DefaultDisplayPreviewCacheMegabytes);
+            _viewerSettings.UseAutomaticCacheSizing = IsAutomaticCacheSizingSelected();
             _viewerSettings.EnableLowMemoryProtection = LowMemoryProtectionCheckBox.IsChecked == true;
             _viewerSettings.UseThumbnailDiskCache = ThumbnailDiskCacheCheckBox.IsChecked == true;
             _viewerSettings.IncludePrivatePathsInDiagnostics = IncludePrivatePathsInDiagnosticsCheckBox.IsChecked == true;
@@ -734,6 +782,13 @@ public partial class ShortcutSettingsWindow : Window
         }
 
         return fallback;
+    }
+
+    private static string FormatMegabytes(int megabytes)
+    {
+        return megabytes >= 1024 && megabytes % 1024 == 0
+            ? $"{megabytes / 1024} GB"
+            : $"{megabytes} MB";
     }
 
     private async Task RefreshThumbnailDiskCacheInfoAsync()
